@@ -1,0 +1,143 @@
+// =============================================================================
+// Demo Status Endpoint + Demo-Visible Logging
+//
+// GET /demo/status — responde en <100ms con estado del sistema demo.
+// DemoLogger     — logs legibles en pantalla durante demo (no técnicos).
+// =============================================================================
+
+import { Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
+import { DEMO } from '../demo/demo-dataset'
+
+const prisma = new PrismaClient({ log: [] })
+
+// ─────────────────────────────────────────────────────────────────
+// GET /demo/status
+// ─────────────────────────────────────────────────────────────────
+
+export async function getDemoStatus(_req: Request, res: Response) {
+  try {
+    // Parallel queries — fast
+    const [patients, pending, urgent, obsCount] = await Promise.all([
+      prisma.patient.count({ where: { tenantId: DEMO.TENANT.ID } }),
+      prisma.recommendation.count({ where: { tenantId: DEMO.TENANT.ID, status: 'PENDING' } }),
+      prisma.recommendation.count({ where: { tenantId: DEMO.TENANT.ID, status: 'PENDING', urgency: 'SOON' } }),
+      prisma.clinicalObservation.count({ where: { tenantId: DEMO.TENANT.ID } }),
+    ])
+
+    const score = await prisma.riskScore.findFirst({
+      where: { tenantId: DEMO.TENANT.ID, scoreType: 'CARDIOVASCULAR_10Y' },
+      orderBy: { computedAt: 'desc' },
+      select: { valuePercent: true, riskCategory: true },
+    })
+
+    const allGood =
+      patients === DEMO.VALIDATION.TOTAL_PATIENTS &&
+      pending  === DEMO.VALIDATION.PENDING_DECISIONS
+
+    res.json({
+      ready:           allGood,
+      patients,
+      decisions:       pending,
+      alerts:          urgent,
+      observations:    obsCount,
+      latestRisk:      score ? { percent: Number(score.valuePercent), category: score.riskCategory } : null,
+      checks: {
+        patients:  patients === DEMO.VALIDATION.TOTAL_PATIENTS,
+        decisions: pending  === DEMO.VALIDATION.PENDING_DECISIONS,
+        riskScore: !!score,
+      },
+    })
+  } catch (err) {
+    res.status(503).json({ ready: false, error: 'Database unreachable' })
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Demo Logger — human-readable, non-technical output
+// Shown on screen during demo to transmit real-time confidence.
+// Format: timestamp + icon + message (no stack traces, no IDs)
+// ─────────────────────────────────────────────────────────────────
+
+const COLORS = {
+  blue:   '\x1b[34m',
+  green:  '\x1b[32m',
+  amber:  '\x1b[33m',
+  red:    '\x1b[31m',
+  reset:  '\x1b[0m',
+  dim:    '\x1b[2m',
+  bold:   '\x1b[1m',
+}
+
+function ts() {
+  return COLORS.dim + new Date().toLocaleTimeString('en', { hour12: false }) + COLORS.reset
+}
+
+export const demoLog = {
+  observationProcessed(loincCode: string, value: number, unit: string, patientName: string) {
+    const label = LOINC_LABELS[loincCode] ?? loincCode
+    console.log(`${ts()}  ${COLORS.blue}[Observation]${COLORS.reset}  ${patientName} — ${label}: ${value} ${unit}`)
+  },
+
+  riskCalculated(patientName: string, percent: number, category: string) {
+    const color = category === 'HIGH' || category === 'VERY_HIGH' ? COLORS.red
+                : category === 'MODERATE' ? COLORS.amber : COLORS.green
+    console.log(`${ts()}  ${COLORS.blue}[Risk Score]${COLORS.reset}   ${patientName} — ${color}${percent}% ${category}${COLORS.reset}`)
+  },
+
+  decisionGenerated(patientName: string, title: string, urgency: string) {
+    const color = urgency === 'URGENT' || urgency === 'CRITICAL' ? COLORS.red
+                : urgency === 'SOON' ? COLORS.amber : COLORS.dim
+    console.log(`${ts()}  ${color}[Alert]${COLORS.reset}        ${patientName} — ${title}`)
+  },
+
+  pipelineComplete(patientName: string, stages: number, ms: number) {
+    console.log(`${ts()}  ${COLORS.green}[Pipeline]${COLORS.reset}     ${patientName} — ${stages} stages complete in ${ms}ms`)
+  },
+
+  observationIngested(count: number, source: string) {
+    console.log(`${ts()}  ${COLORS.blue}[Ingestion]${COLORS.reset}    ${count} observation(s) from ${source}`)
+  },
+
+  apiRequest(method: string, path: string, ms: number, status: number) {
+    const color = status >= 400 ? COLORS.red : status >= 300 ? COLORS.amber : COLORS.dim
+    console.log(`${ts()}  ${COLORS.dim}[API]${COLORS.reset}          ${method} ${path} → ${color}${status}${COLORS.reset} (${ms}ms)`)
+  },
+
+  systemReady() {
+    console.log(`\n${COLORS.bold}  Vytalix Clinical Intelligence Engine${COLORS.reset}`)
+    console.log(`  ${COLORS.green}System ready${COLORS.reset} — all services operational\n`)
+  },
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Express middleware — attaches demo logging to request lifecycle
+// ─────────────────────────────────────────────────────────────────
+
+export function demoLoggingMiddleware(req: Request, res: Response, next: Function) {
+  const start = Date.now()
+  res.on('finish', () => {
+    const ms = Date.now() - start
+    // Only log clinical API calls, skip static/health
+    if (req.path.startsWith('/v1') || req.path.startsWith('/demo')) {
+      demoLog.apiRequest(req.method, req.path, ms, res.statusCode)
+    }
+  })
+  next()
+}
+
+// ─────────────────────────────────────────────────────────────────
+// LOINC display names for demo logs
+// ─────────────────────────────────────────────────────────────────
+
+const LOINC_LABELS: Record<string, string> = {
+  '2089-1':  'LDL Cholesterol',
+  '2085-9':  'HDL Cholesterol',
+  '2093-3':  'Total Cholesterol',
+  '8480-6':  'Systolic BP',
+  '8462-4':  'Diastolic BP',
+  '2345-7':  'Fasting Glucose',
+  '39156-5': 'BMI',
+  '30522-7': 'hsCRP',
+  '4548-4':  'HbA1c',
+}

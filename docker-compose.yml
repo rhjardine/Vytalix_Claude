@@ -1,0 +1,184 @@
+version: '3.9'
+
+# =============================================================================
+# Vytalix Clinical Intelligence Engine — Docker Compose
+# Profiles:
+#   dev:    api + postgres + redis (no monitoring)
+#   full:   dev + adminer + redis-commander
+#   prod:   api + postgres + redis (production config)
+#
+# Usage:
+#   Development:  docker compose --profile dev up
+#   Full stack:   docker compose --profile full up
+#   Production:   docker compose --profile prod up -d
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # PostgreSQL with TimescaleDB
+  # ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: timescale/timescaledb:2.14.2-pg15
+    profiles: ["dev", "full", "prod"]
+    container_name: vytalix-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vytalix_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-vytalix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password_change_in_prod}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vytalix} -d ${POSTGRES_DB:-vytalix_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Redis — session cache, rate limiting, idempotency keys
+  # ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    profiles: ["dev", "full", "prod"]
+    container_name: vytalix-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-local_redis_dev} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-local_redis_dev}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Vytalix API — Node.js + TypeScript
+  # ─────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    profiles: ["dev", "full", "prod"]
+    container_name: vytalix-api
+    ports:
+      - "${API_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vytalix}:${POSTGRES_PASSWORD:-local_dev_password_change_in_prod}@postgres:5432/${POSTGRES_DB:-vytalix_dev}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-local_redis_dev}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_THIS_IN_PRODUCTION_MIN_32_CHARS}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_PORT: 3001
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Dev: mount source for hot reload. Prod: no mount (image is self-contained)
+      - ${DEV_MOUNT:-/dev/null}:/dev/null:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Next.js Frontend (physician dashboard)
+  # ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    profiles: ["full", "prod"]
+    container_name: vytalix-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:3001}
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # DB migration runner (runs once and exits)
+  # ─────────────────────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    profiles: ["dev", "full"]
+    container_name: vytalix-migrate
+    command: >
+      sh -c "
+        npx prisma migrate deploy &&
+        psql $$DATABASE_URL -f migration_rls.sql &&
+        echo 'Migrations complete'
+      "
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vytalix}:${POSTGRES_PASSWORD:-local_dev_password_change_in_prod}@postgres:5432/${POSTGRES_DB:-vytalix_dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Demo seeder (runs once and exits)
+  # ─────────────────────────────────────────────────────────────────
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    profiles: ["demo"]
+    container_name: vytalix-seed
+    command: npx ts-node src/demo/seed-demo.ts
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vytalix}:${POSTGRES_PASSWORD:-local_dev_password_change_in_prod}@postgres:5432/${POSTGRES_DB:-vytalix_dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Dev tools (full profile only)
+  # ─────────────────────────────────────────────────────────────────
+  adminer:
+    image: adminer:4.8.1
+    profiles: ["full"]
+    container_name: vytalix-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

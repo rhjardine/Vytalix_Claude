@@ -1,0 +1,1362 @@
+openapi: 3.1.0
+info:
+  title: Vytalix Clinical Intelligence Engine API
+  version: 1.0.0-mvp
+  description: |
+    Production-grade clinical decision support API.
+    All endpoints are tenant-scoped via X-Tenant-ID header.
+    All writes are idempotent via Idempotency-Key header.
+    All responses include X-Correlation-ID for distributed tracing.
+  contact:
+    name: Vytalix Engineering
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.vytalix.health/v1
+    description: Production
+  - url: https://api.staging.vytalix.health/v1
+    description: Staging
+  - url: http://localhost:3001/v1
+    description: Local development
+
+# ─────────────────────────────────────────────
+# SECURITY
+# ─────────────────────────────────────────────
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT issued by Vytalix Auth service. Contains:
+        - sub: userId
+        - tenant_id: tenantId (UUID)
+        - role: UserRole enum
+        - org_id: organizationId
+
+  # ─────────────────────────────────────────────
+  # SHARED HEADERS
+  # ─────────────────────────────────────────────
+  parameters:
+    TenantHeader:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant UUID. Must match tenant_id in JWT.
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 64
+      description: |
+        Client-generated key for idempotent writes.
+        Same key within 24h returns the cached response without re-processing.
+        Recommended for: POST /observations, POST /risk/calculate, POST /decisions/generate
+
+    CorrelationID:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Client-supplied correlation ID. If absent, server generates one.
+
+    PatientId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Patient UUID
+
+    DecisionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Recommendation/Decision UUID
+
+  # ─────────────────────────────────────────────
+  # REUSABLE SCHEMAS
+  # ─────────────────────────────────────────────
+  schemas:
+
+    # ── Error Model (RFC 7807 Problem Details) ──
+    ProblemDetail:
+      type: object
+      required: [type, title, status, detail, instance]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://api.vytalix.health/errors/validation-failed"
+        title:
+          type: string
+          example: "Validation Failed"
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: "LDL value 850 mg/dL exceeds physiological maximum of 800 mg/dL"
+        instance:
+          type: string
+          format: uri
+          example: "/v1/observations"
+        correlationId:
+          type: string
+          format: uuid
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+
+    # ── Pagination ──
+    PaginationMeta:
+      type: object
+      required: [total, page, pageSize, hasNext]
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        hasNext:
+          type: boolean
+
+    # ── Patient ──
+    PatientCreate:
+      type: object
+      required: [mrn, firstName, lastName, dateOfBirth, biologicalSex, organizationId]
+      properties:
+        mrn:
+          type: string
+          maxLength: 64
+          description: Medical Record Number — unique per tenant
+          example: "MRN-2024-00412"
+        organizationId:
+          type: string
+          format: uuid
+        firstName:
+          type: string
+          maxLength: 100
+        lastName:
+          type: string
+          maxLength: 100
+        dateOfBirth:
+          type: string
+          format: date
+          example: "1968-04-15"
+        biologicalSex:
+          $ref: '#/components/schemas/BiologicalSex'
+        externalIds:
+          type: object
+          description: IDs from external systems (EMR, insurance, etc.)
+          additionalProperties:
+            type: string
+          example:
+            epic_mrn: "E-00123"
+            hl7_pid: "PID-00456"
+
+    PatientResponse:
+      allOf:
+        - $ref: '#/components/schemas/PatientCreate'
+        - type: object
+          required: [id, tenantId, status, enrolledAt]
+          properties:
+            id:
+              type: string
+              format: uuid
+            tenantId:
+              type: string
+              format: uuid
+            status:
+              $ref: '#/components/schemas/PatientStatus'
+            enrolledAt:
+              type: string
+              format: date-time
+            healthSnapshot:
+              $ref: '#/components/schemas/PatientHealthSnapshot'
+
+    PatientHealthSnapshot:
+      type: object
+      description: Latest aggregated clinical values. Null fields = data not yet available.
+      properties:
+        latestSystolicBp:
+          type: number
+          format: float
+          nullable: true
+          example: 148.0
+        latestDiastolicBp:
+          type: number
+          format: float
+          nullable: true
+        latestLdlMgDl:
+          type: number
+          format: float
+          nullable: true
+          example: 213.0
+        latestHdlMgDl:
+          type: number
+          format: float
+          nullable: true
+        latestTotalCholesterol:
+          type: number
+          format: float
+          nullable: true
+        latestFastingGlucose:
+          type: number
+          format: float
+          nullable: true
+        isSmoker:
+          type: boolean
+          nullable: true
+        hasDiabetes:
+          type: boolean
+          nullable: true
+        isOnAntihypertensives:
+          type: boolean
+          nullable: true
+        ageAtSnapshot:
+          type: integer
+          nullable: true
+        lastObservationAt:
+          type: string
+          format: date-time
+          nullable: true
+        dataCompleteness:
+          type: object
+          description: Percentage of critical fields populated (0–100)
+          properties:
+            overall:
+              type: integer
+              minimum: 0
+              maximum: 100
+            cardiovascular:
+              type: integer
+              minimum: 0
+              maximum: 100
+            missingCritical:
+              type: array
+              items:
+                type: string
+              example: ["fasting_glucose", "smoking_status"]
+
+    # ── Observation ──
+    ObservationCreate:
+      type: object
+      required: [patientId, loincCode, observedAt, sourceSystem]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        loincCode:
+          type: string
+          maxLength: 20
+          description: LOINC code identifying the measurement type
+          example: "2089-1"
+        displayName:
+          type: string
+          description: Human-readable name. Resolved from LOINC registry if absent.
+          example: "LDL Cholesterol"
+        valueNumeric:
+          type: number
+          format: double
+          nullable: true
+          example: 213.0
+        valueText:
+          type: string
+          nullable: true
+          example: "Positive"
+        unit:
+          type: string
+          description: UCUM unit code. Auto-converted to canonical unit if needed.
+          example: "mg/dL"
+        refRangeLow:
+          type: number
+          nullable: true
+        refRangeHigh:
+          type: number
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+        sourceSystem:
+          $ref: '#/components/schemas/ObservationSource'
+        fhirResourceId:
+          type: string
+          nullable: true
+          description: Original FHIR Observation.id if ingested from FHIR source
+
+    ObservationResponse:
+      allOf:
+        - $ref: '#/components/schemas/ObservationCreate'
+        - type: object
+          required: [id, tenantId, ingestedAt, normalizedValue, normalizedUnit]
+          properties:
+            id:
+              type: string
+              format: uuid
+            tenantId:
+              type: string
+              format: uuid
+            ingestedAt:
+              type: string
+              format: date-time
+            normalizedValue:
+              type: number
+              nullable: true
+              description: Value after unit conversion to canonical unit
+            normalizedUnit:
+              type: string
+              nullable: true
+              description: Canonical unit after normalization
+            isCorrection:
+              type: boolean
+              default: false
+            validationFlags:
+              type: array
+              items:
+                type: string
+              description: Non-blocking validation warnings
+              example: ["VALUE_NEAR_PHYSIOLOGICAL_MAX"]
+
+    ObservationBatchCreate:
+      type: object
+      required: [observations]
+      properties:
+        observations:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ObservationCreate'
+        continueOnError:
+          type: boolean
+          default: false
+          description: |
+            If true, valid observations are ingested even if some fail validation.
+            If false (default), any failure rejects the entire batch.
+
+    ObservationBatchResponse:
+      type: object
+      required: [accepted, rejected, total]
+      properties:
+        accepted:
+          type: integer
+        rejected:
+          type: integer
+        total:
+          type: integer
+        results:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/ObservationResponse'
+              - $ref: '#/components/schemas/ProblemDetail'
+
+    # ── FHIR Ingestion ──
+    FhirBundleIngest:
+      type: object
+      required: [bundle]
+      properties:
+        bundle:
+          type: object
+          description: FHIR R4 Bundle resource (resourceType must be "Bundle")
+          required: [resourceType, entry]
+          properties:
+            resourceType:
+              type: string
+              enum: [Bundle]
+            type:
+              type: string
+              enum: [transaction, collection, searchset]
+            entry:
+              type: array
+              items:
+                type: object
+        patientId:
+          type: string
+          format: uuid
+          description: |
+            Override patient resolution. If absent, patient is resolved
+            from FHIR Patient.identifier matching tenant MRN registry.
+        dryRun:
+          type: boolean
+          default: false
+          description: Validate and map without persisting. Returns what would be ingested.
+
+    FhirIngestResponse:
+      type: object
+      required: [processed, patients, observations, errors]
+      properties:
+        processed:
+          type: integer
+        patients:
+          type: integer
+          description: Patient resources resolved or created
+        observations:
+          type: integer
+          description: Observation resources ingested
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              resourceType:
+                type: string
+              resourceId:
+                type: string
+              error:
+                type: string
+        mappingReport:
+          type: object
+          description: LOINC mapping results for this ingest
+          properties:
+            mapped:
+              type: integer
+            unmapped:
+              type: integer
+            unmappedCodes:
+              type: array
+              items:
+                type: string
+
+    # ── Risk Scoring ──
+    RiskCalculateRequest:
+      type: object
+      required: [patientId, scoreType]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        scoreType:
+          $ref: '#/components/schemas/RiskScoreType'
+        forceRecalculate:
+          type: boolean
+          default: false
+          description: |
+            If false (default), returns cached score if computed within last 24h
+            and no new observations have been ingested since.
+            If true, always recomputes.
+
+    RiskScoreResponse:
+      type: object
+      required: [id, patientId, scoreType, value, valuePercent, riskCategory, algorithmId, computedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        scoreType:
+          $ref: '#/components/schemas/RiskScoreType'
+        value:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Probability (0.0–1.0)
+        valuePercent:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        riskCategory:
+          $ref: '#/components/schemas/RiskCategory'
+        algorithmId:
+          type: string
+          example: "framingham_2008_updated"
+        algorithmVersion:
+          type: string
+          example: "1.0.0"
+        inputSnapshot:
+          type: object
+          description: Exact inputs used for this calculation (for audit reproduction)
+        computedAt:
+          type: string
+          format: date-time
+        dataQuality:
+          type: object
+          properties:
+            completeness:
+              type: integer
+              description: Percentage of required inputs that were present
+            missingInputs:
+              type: array
+              items:
+                type: string
+            stalestDataPoint:
+              type: string
+              format: date-time
+              description: Oldest observation used in calculation
+
+    # ── Decision / Recommendation ──
+    DecisionGenerateRequest:
+      type: object
+      required: [patientId]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        protocolId:
+          type: string
+          format: uuid
+          description: |
+            If absent, all active protocols for the patient's organization are evaluated.
+        assignTo:
+          type: string
+          format: uuid
+          description: Physician userId to assign generated recommendations to
+        forceRegenerate:
+          type: boolean
+          default: false
+          description: Re-evaluate even if a PENDING recommendation exists for the same rule
+
+    DecisionResponse:
+      type: object
+      required: [id, patientId, category, urgency, title, body, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        category:
+          $ref: '#/components/schemas/ClinicalDomain'
+        urgency:
+          $ref: '#/components/schemas/Urgency'
+        title:
+          type: string
+        body:
+          type: string
+          description: Full actionable recommendation text
+        status:
+          $ref: '#/components/schemas/RecommendationStatus'
+        assignedTo:
+          type: string
+          format: uuid
+          nullable: true
+        riskScoreRef:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            scoreType:
+              type: string
+            valuePercent:
+              type: number
+            riskCategory:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    DecisionGenerateResponse:
+      type: object
+      required: [generated, skipped, recommendations]
+      properties:
+        generated:
+          type: integer
+          description: New recommendations created
+        skipped:
+          type: integer
+          description: Rules evaluated but no recommendation triggered
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DecisionResponse'
+
+    # ── Decision Trace (Explainability) ──
+    DecisionTraceResponse:
+      type: object
+      required: [id, recommendationId, engineVersion, explanation, rulesFired, tracedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recommendationId:
+          type: string
+          format: uuid
+        engineVersion:
+          type: string
+        explanation:
+          $ref: '#/components/schemas/ClinicalExplanation'
+        rulesFired:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleFiredEntry'
+        riskScoreSnapshot:
+          type: object
+          nullable: true
+        patientSnapshotAtDecision:
+          type: object
+          description: Complete patient state at time of decision
+        tracedAt:
+          type: string
+          format: date-time
+
+    ClinicalExplanation:
+      type: object
+      required: [summary, primaryFactors, cautionFactors, missingData, confidence]
+      description: |
+        Clinician-readable explanation of the decision. 
+        All fields are deterministically generated from rule/data outputs.
+        No LLM generation — fully reproducible.
+      properties:
+        summary:
+          type: string
+          description: One-sentence clinical summary in plain medical language
+          example: "Patient presents LDL-C of 213 mg/dL exceeding the ACC/AHA threshold for statin initiation."
+        primaryFactors:
+          type: array
+          items:
+            type: string
+          description: Clinical factors that triggered this recommendation
+          example:
+            - "LDL-C 213 mg/dL (threshold: ≥190 mg/dL per ACC/AHA Grade I, Level B-R)"
+            - "Systolic BP 148 mmHg (Stage 2 hypertension threshold: ≥140 mmHg)"
+        cautionFactors:
+          type: array
+          items:
+            type: string
+          description: Mitigating factors or contradictory signals the physician should consider
+          example:
+            - "HDL-C 42 mg/dL — below optimal protective range (target >60 mg/dL)"
+            - "No prior cardiovascular event documented in record"
+        missingData:
+          type: array
+          items:
+            type: string
+          description: Data gaps that reduce decision confidence
+          example:
+            - "Smoking status not recorded — assumed non-smoker for Framingham calculation"
+            - "Fasting glucose last recorded 14 months ago — prediabetes status uncertain"
+        confidence:
+          type: string
+          enum: [high, medium, low]
+          description: |
+            high: All critical inputs present and recent (<90 days)
+            medium: Some inputs estimated or >90 days old
+            low: Critical inputs missing or >180 days old
+        evidenceGrade:
+          type: string
+          nullable: true
+          example: "ACC/AHA Grade I, Level B-R"
+        guidelineReference:
+          type: string
+          nullable: true
+          example: "2018 AHA/ACC Guideline on the Management of Blood Cholesterol"
+
+    RuleFiredEntry:
+      type: object
+      required: [ruleId, ruleName, passed, conditionField, patientValue, threshold, operator]
+      properties:
+        ruleId:
+          type: string
+          format: uuid
+        ruleName:
+          type: string
+        passed:
+          type: boolean
+        conditionField:
+          type: string
+          example: "latestLdlMgDl"
+        patientValue:
+          description: Actual patient value at time of evaluation
+        threshold:
+          description: Rule threshold value(s)
+        operator:
+          type: string
+          example: "gte"
+        clinicalWeight:
+          type: number
+          format: float
+          description: Relative weight of this rule in the overall decision (0–1)
+
+    # ── Status Review ──
+    RecommendationReview:
+      type: object
+      required: [action]
+      properties:
+        action:
+          $ref: '#/components/schemas/ReviewAction'
+        rationaleCode:
+          type: string
+          enum:
+            - CLINICALLY_INAPPROPRIATE
+            - PATIENT_PREFERENCE
+            - ALREADY_MANAGED
+            - INSUFFICIENT_DATA
+            - WILL_MONITOR
+            - OTHER
+          description: Required when action is REJECTED or DEFERRED
+        note:
+          type: string
+          maxLength: 2000
+          description: Free-text clinical note
+
+    # ── Enums ──
+    BiologicalSex:
+      type: string
+      enum: [MALE, FEMALE, INTERSEX]
+
+    PatientStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, TRANSFERRED, DECEASED]
+
+    ObservationSource:
+      type: string
+      enum: [EMR_IMPORT, LAB_IMPORT, MANUAL_ENTRY, PATIENT_REPORTED, DEVICE_SYNC, FHIR_IMPORT]
+
+    RiskScoreType:
+      type: string
+      enum: [CARDIOVASCULAR_10Y]
+
+    RiskCategory:
+      type: string
+      enum: [LOW, MODERATE, HIGH, VERY_HIGH]
+
+    ClinicalDomain:
+      type: string
+      enum: [CARDIOVASCULAR, METABOLIC, PREVENTIVE, LONGEVITY, ONCOLOGY]
+
+    Urgency:
+      type: string
+      enum: [ROUTINE, SOON, URGENT, CRITICAL]
+
+    RecommendationStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REJECTED, DEFERRED, EXPIRED, SUPERSEDED]
+
+    ReviewAction:
+      type: string
+      enum: [ACCEPTED, REJECTED, DEFERRED, ESCALATED]
+
+  # ─────────────────────────────────────────────
+  # STANDARD RESPONSES
+  # ─────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+    Forbidden:
+      description: Valid JWT but insufficient role or wrong tenant
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+    NotFound:
+      description: Resource not found within the authenticated tenant
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+    UnprocessableEntity:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+    Conflict:
+      description: Resource already exists (duplicate MRN, etc.)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+    TooManyRequests:
+      description: Rate limit exceeded for this tenant
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until rate limit resets
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ════════════════════════════════
+  # PATIENTS
+  # ════════════════════════════════
+
+  /patients:
+    post:
+      operationId: createPatient
+      summary: Register a new patient
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientCreate'
+            examples:
+              standard:
+                summary: Standard patient registration
+                value:
+                  mrn: "MRN-2024-00412"
+                  organizationId: "550e8400-e29b-41d4-a716-446655440000"
+                  firstName: "Carlos"
+                  lastName: "Mendoza"
+                  dateOfBirth: "1968-04-15"
+                  biologicalSex: "MALE"
+      responses:
+        '201':
+          description: Patient registered successfully
+          headers:
+            X-Correlation-ID:
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      operationId: listPatients
+      summary: List patients for the authenticated organization
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - name: organizationId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/PatientStatus'
+        - name: riskCategory
+          in: query
+          schema:
+            $ref: '#/components/schemas/RiskCategory'
+          description: Filter by latest cardiovascular risk category
+        - name: hasPendingDecisions
+          in: query
+          schema:
+            type: boolean
+          description: Filter to patients with unreviewed recommendations
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 25
+            maximum: 100
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+          description: Full-text search on name and MRN
+      responses:
+        '200':
+          description: Paginated patient list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PatientResponse'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /patients/{id}:
+    get:
+      operationId: getPatient
+      summary: Get patient detail with health snapshot
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/PatientId'
+      responses:
+        '200':
+          description: Patient detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ════════════════════════════════
+  # OBSERVATIONS
+  # ════════════════════════════════
+
+  /observations:
+    post:
+      operationId: ingestObservation
+      summary: Ingest a single clinical observation
+      tags: [Observations]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationCreate'
+            examples:
+              ldl_result:
+                summary: LDL cholesterol result
+                value:
+                  patientId: "550e8400-e29b-41d4-a716-446655440001"
+                  loincCode: "2089-1"
+                  valueNumeric: 213.0
+                  unit: "mg/dL"
+                  observedAt: "2024-11-10T09:30:00Z"
+                  sourceSystem: "MANUAL_ENTRY"
+              mmol_conversion:
+                summary: Cholesterol in mmol/L (auto-converted to mg/dL)
+                value:
+                  patientId: "550e8400-e29b-41d4-a716-446655440001"
+                  loincCode: "2089-1"
+                  valueNumeric: 5.51
+                  unit: "mmol/L"
+                  observedAt: "2024-11-10T09:30:00Z"
+                  sourceSystem: "LAB_IMPORT"
+      responses:
+        '201':
+          description: Observation ingested and normalized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /observations/batch:
+    post:
+      operationId: ingestObservationBatch
+      summary: Ingest multiple observations atomically or with partial success
+      tags: [Observations]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationBatchCreate'
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file. Required columns — patientMrn, loincCode, value, unit, observedAt
+                continueOnError:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Batch processed (may include partial failures if continueOnError=true)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationBatchResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /patients/{id}/observations:
+    get:
+      operationId: getPatientObservations
+      summary: Get observation history for a patient
+      tags: [Observations]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/PatientId'
+        - name: loincCode
+          in: query
+          schema:
+            type: string
+          description: Filter by LOINC code
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of time range (ISO 8601)
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+      responses:
+        '200':
+          description: Observation timeline
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ObservationResponse'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ════════════════════════════════
+  # FHIR INGESTION
+  # ════════════════════════════════
+
+  /ingest/fhir:
+    post:
+      operationId: ingestFhirBundle
+      summary: Ingest a FHIR R4 Bundle (Patient + Observation resources)
+      tags: [Ingestion]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FhirBundleIngest'
+          application/fhir+json:
+            schema:
+              type: object
+              description: Raw FHIR R4 Bundle — Content-Type signals native FHIR format
+      responses:
+        '200':
+          description: Bundle processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FhirIngestResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ════════════════════════════════
+  # RISK SCORING
+  # ════════════════════════════════
+
+  /risk/calculate:
+    post:
+      operationId: calculateRisk
+      summary: Trigger risk score calculation for a patient
+      tags: [Risk]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiskCalculateRequest'
+      responses:
+        '200':
+          description: Risk score computed (or returned from cache)
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+              description: Indicates whether cached or freshly computed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskScoreResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /patients/{id}/risk:
+    get:
+      operationId: getPatientRiskHistory
+      summary: Get risk score history for a patient
+      tags: [Risk]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/PatientId'
+        - name: scoreType
+          in: query
+          schema:
+            $ref: '#/components/schemas/RiskScoreType'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+      responses:
+        '200':
+          description: Risk score history (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RiskScoreResponse'
+                  trend:
+                    type: string
+                    enum: [IMPROVING, STABLE, DETERIORATING, INSUFFICIENT_DATA]
+                    description: Derived from comparing last 3 scores
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ════════════════════════════════
+  # DECISIONS
+  # ════════════════════════════════
+
+  /decisions/generate:
+    post:
+      operationId: generateDecisions
+      summary: Run protocol evaluation and generate recommendations
+      description: |
+        Evaluates all active protocol rules against the patient's current health snapshot.
+        Idempotent — same inputs within 24h return the same recommendations unless
+        forceRegenerate=true or new observations have been ingested since last evaluation.
+      tags: [Decisions]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionGenerateRequest'
+      responses:
+        '200':
+          description: Decision generation complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionGenerateResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /patients/{id}/decisions:
+    get:
+      operationId: getPatientDecisions
+      summary: List recommendations for a patient
+      tags: [Decisions]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/PatientId'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/RecommendationStatus'
+        - name: urgency
+          in: query
+          schema:
+            $ref: '#/components/schemas/Urgency'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+      responses:
+        '200':
+          description: Patient's recommendation history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DecisionResponse'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /decisions/{id}/trace:
+    get:
+      operationId: getDecisionTrace
+      summary: Get the full explainability trace for a recommendation
+      description: |
+        Returns the complete audit trail of how this recommendation was generated:
+        which rules fired, what patient values were used, and the clinician-readable
+        explanation. All data is deterministic and reproducible.
+      tags: [Decisions]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/DecisionId'
+      responses:
+        '200':
+          description: Decision trace with full explainability
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionTraceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /decisions/{id}/review:
+    patch:
+      operationId: reviewDecision
+      summary: Physician reviews a recommendation (accept/reject/defer)
+      tags: [Decisions]
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/CorrelationID'
+        - $ref: '#/components/parameters/DecisionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationReview'
+      responses:
+        '200':
+          description: Review recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionResponse'
+        '409':
+          description: Recommendation already reviewed (terminal status)
+          $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+tags:
+  - name: Patients
+    description: Patient registration and demographics
+  - name: Observations
+    description: Clinical data ingestion (manual, CSV, FHIR)
+  - name: Ingestion
+    description: Bulk and FHIR-native ingestion endpoints
+  - name: Risk
+    description: Risk score computation and history
+  - name: Decisions
+    description: Clinical decision generation, review, and explainability
