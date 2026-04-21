@@ -136,7 +136,7 @@ services:
     command: >
       sh -c "
         npx prisma migrate deploy &&
-        psql $$DATABASE_URL -f migration_rls.sql &&
+        psql $$DATABASE_URL -f prisma/migration_rls.sql &&
         echo 'Migrations complete'
       "
     environment:

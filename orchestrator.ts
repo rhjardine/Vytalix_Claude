@@ -1,4 +1,4 @@
-// @ts-nocheck — Prisma types require `prisma generate` (run `npm run db:generate`)
+// @ts-nocheck
 // =============================================================================
 // Clinical Pipeline Orchestrator
 // Stages: SNAPSHOT_UPDATE → RISK_SCORING → DECISION_GENERATION
@@ -37,11 +37,13 @@ export class PipelineOrchestrator {
     const log = logger.child({ correlationId, tenantId, patientId, fn: 'Pipeline' })
     log.info('Pipeline started')
 
-    // Stage 1: Verify snapshot is current (updated by DB trigger)
+    // Stage 1: Verify snapshot is current (updated by DB trigger on insert)
     await this.runStage(ctx, 'SNAPSHOT_UPDATE', async () => {
-      const db = await getTenantDb(tenantId)
       const snapshot = await withTenant(tenantId, (tc) =>
-        tc.queryOne('SELECT "updatedAt", "snapshotVersion" FROM patient_health_snapshots WHERE "patientId"=$1::uuid', [patientId])
+        tc.queryOne(
+          'SELECT "updatedAt", "snapshotVersion" FROM patient_health_snapshots WHERE "patientId"=$1::uuid',
+          [patientId]
+        )
       )
       if (!snapshot) return { status: 'skipped', detail: { reason: 'No snapshot yet' } }
       return { status: 'success', detail: { version: snapshot.snapshotVersion } }

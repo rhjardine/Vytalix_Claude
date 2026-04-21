@@ -3,13 +3,13 @@
 //
 // GET /demo/status — responde en <100ms con estado del sistema demo.
 // DemoLogger     — logs legibles en pantalla durante demo (no técnicos).
+//
+// Uses pg direct (getDb().rawQuery) — no Prisma binary required.
 // =============================================================================
 
 import { Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
-import { DEMO } from '../demo/demo-dataset'
-
-const prisma = new PrismaClient({ log: [] })
+import { getDb } from '../lib/db'
+import { DEMO } from './demo-dataset'
 
 // ─────────────────────────────────────────────────────────────────
 // GET /demo/status
@@ -17,35 +17,57 @@ const prisma = new PrismaClient({ log: [] })
 
 export async function getDemoStatus(_req: Request, res: Response) {
   try {
-    // Parallel queries — fast
-    const [patients, pending, urgent, obsCount] = await Promise.all([
-      prisma.patient.count({ where: { tenantId: DEMO.TENANT.ID } }),
-      prisma.recommendation.count({ where: { tenantId: DEMO.TENANT.ID, status: 'PENDING' } }),
-      prisma.recommendation.count({ where: { tenantId: DEMO.TENANT.ID, status: 'PENDING', urgency: 'SOON' } }),
-      prisma.clinicalObservation.count({ where: { tenantId: DEMO.TENANT.ID } }),
+    const db = getDb()
+
+    // Parallel queries — fast, no tenant context needed for counts
+    const [r1, r2, r3, r4, r5] = await Promise.all([
+      db.rawQuery<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM patients WHERE "tenantId"=$1::uuid`,
+        [DEMO.TENANT.ID]
+      ),
+      db.rawQuery<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM recommendations WHERE "tenantId"=$1::uuid AND status='PENDING'`,
+        [DEMO.TENANT.ID]
+      ),
+      db.rawQuery<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM recommendations WHERE "tenantId"=$1::uuid AND status='PENDING' AND urgency='SOON'`,
+        [DEMO.TENANT.ID]
+      ),
+      db.rawQuery<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM clinical_observations WHERE "tenantId"=$1::uuid`,
+        [DEMO.TENANT.ID]
+      ),
+      db.rawQuery<{ pct: string; cat: string }>(
+        `SELECT "valuePercent"::float AS pct, "riskCategory" AS cat
+         FROM risk_scores WHERE "tenantId"=$1::uuid AND "scoreType"='CARDIOVASCULAR_10Y'
+         ORDER BY "computedAt" DESC LIMIT 1`,
+        [DEMO.TENANT.ID]
+      ),
     ])
 
-    const score = await prisma.riskScore.findFirst({
-      where: { tenantId: DEMO.TENANT.ID, scoreType: 'CARDIOVASCULAR_10Y' },
-      orderBy: { computedAt: 'desc' },
-      select: { valuePercent: true, riskCategory: true },
-    })
+    const patients     = Number(r1.rows[0]?.n ?? 0)
+    const pending      = Number(r2.rows[0]?.n ?? 0)
+    const urgent       = Number(r3.rows[0]?.n ?? 0)
+    const observations = Number(r4.rows[0]?.n ?? 0)
+    const scoreRow     = r5.rows[0] ?? null
 
     const allGood =
       patients === DEMO.VALIDATION.TOTAL_PATIENTS &&
       pending  === DEMO.VALIDATION.PENDING_DECISIONS
 
     res.json({
-      ready:           allGood,
+      ready:        allGood,
       patients,
-      decisions:       pending,
-      alerts:          urgent,
-      observations:    obsCount,
-      latestRisk:      score ? { percent: Number(score.valuePercent), category: score.riskCategory } : null,
+      decisions:    pending,
+      alerts:       urgent,
+      observations,
+      latestRisk:   scoreRow
+        ? { percent: Number(scoreRow.pct), category: scoreRow.cat }
+        : null,
       checks: {
         patients:  patients === DEMO.VALIDATION.TOTAL_PATIENTS,
         decisions: pending  === DEMO.VALIDATION.PENDING_DECISIONS,
-        riskScore: !!score,
+        riskScore: !!scoreRow,
       },
     })
   } catch (err) {
@@ -55,8 +77,6 @@ export async function getDemoStatus(_req: Request, res: Response) {
 
 // ─────────────────────────────────────────────────────────────────
 // Demo Logger — human-readable, non-technical output
-// Shown on screen during demo to transmit real-time confidence.
-// Format: timestamp + icon + message (no stack traces, no IDs)
 // ─────────────────────────────────────────────────────────────────
 
 const COLORS = {
@@ -118,7 +138,6 @@ export function demoLoggingMiddleware(req: Request, res: Response, next: Functio
   const start = Date.now()
   res.on('finish', () => {
     const ms = Date.now() - start
-    // Only log clinical API calls, skip static/health
     if (req.path.startsWith('/v1') || req.path.startsWith('/demo')) {
       demoLog.apiRequest(req.method, req.path, ms, res.statusCode)
     }

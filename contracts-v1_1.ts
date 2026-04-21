@@ -7,7 +7,7 @@
 //   TimelineV1_1     → ldlTrend, systolicTrend on summary
 //
 // v1 consumers receiving v1.1 payloads: safe — they ignore unknown fields.
-// v1.1 consumers receiving v1 payloads: safe — new fields are optional (undefined).
+// v1.1 consumers receiving v1 payloads: safe — new fields are optional.
 // =============================================================================
 
 import type {
@@ -28,14 +28,14 @@ export * from '../v1'  // re-export everything from v1
 export interface BiologicalAgeEstimateV1_1 {
   readonly chronologicalAge: number
   readonly biologicalAge: number
-  readonly delta: number            // negative = biologically younger than chronological
-  readonly algorithm: string        // e.g. "phenoage_proxy_v1"
+  readonly delta: number
+  readonly algorithm: string
   readonly computedAt: ISODateTime
 }
 
 export interface PatientV1_1 extends PatientV1 {
   readonly biologicalAgeEstimate?: BiologicalAgeEstimateV1_1
-  readonly externalIds?: Record<string, string>  // e.g. { epic_mrn: "E-00123" }
+  readonly externalIds?: Record<string, string>
 }
 
 // ─────────────────────────────────────────────────────────────────
