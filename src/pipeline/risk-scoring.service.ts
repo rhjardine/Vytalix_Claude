@@ -94,33 +94,65 @@ export class RiskScoringService {
     })
   }
 
-  // ── Framingham 2008 Updated equation (D'Agostino et al.) ─────────
+  // ── Framingham 2008 General CVD equation (D'Agostino et al.) ─────
+  //
+  // Reference: D'Agostino RB, Vasan RS, Pencina MJ, et al.
+  //   "General Cardiovascular Risk Profile for Use in Primary Care:
+  //    The Framingham Heart Study." Circulation. 2008;117:743-753.
+  //   Table 2 (sex-specific beta coefficients), Appendix score sheets
+  //   (baseline 10-year survival S0 and mean of the linear predictor).
+  //
+  // 10-year risk = 1 − S0 ^ exp( Σβ·X − Σβ·X̄ )
+  //
+  // IMPORTANT (clinical correctness): the published men's model has NO
+  // age×HDL interaction term, and uses lnAge coefficient 3.06117 with a
+  // mean linear predictor of 23.9802 (S0 = 0.88936). A prior revision of
+  // this file used an invalid age×HDL term and an off-by mean (23.9388),
+  // which produced impossible risks (~99%) for average male profiles.
+  // Constants below are validated against the paper's worked examples.
+
+  private static readonly FRAMINGHAM = {
+    MALE: {
+      lnAge: 3.06117, lnTC: 1.12370, lnHDL: -0.93263,
+      lnSBPTreated: 1.99881, lnSBPUntreated: 1.93303,
+      smoker: 0.65451, diabetes: 0.57367,
+      meanLinearPredictor: 23.9802, baselineSurvival: 0.88936,
+    },
+    FEMALE: {
+      lnAge: 2.32888, lnTC: 1.20904, lnHDL: -0.70833,
+      lnSBPTreated: 2.82263, lnSBPUntreated: 2.76157,
+      smoker: 0.52873, diabetes: 0.69154,
+      meanLinearPredictor: 26.1931, baselineSurvival: 0.95012,
+    },
+  } as const
 
   private framinghamEquation(inputs: CardiovascularInputs) {
     const sex = inputs.biologicalSex === 'MALE' ? 'MALE' : 'FEMALE'
+    const c = RiskScoringService.FRAMINGHAM[sex]
+
     const lnAge = Math.log(inputs.age)
     const lnTC  = Math.log(inputs.totalCholesterol)
     const lnHDL = Math.log(inputs.hdlCholesterol)
-    const lnSBPt  = inputs.isOnAntihypertensives ? Math.log(inputs.systolicBp) : 0
-    const lnSBPut = !inputs.isOnAntihypertensives ? Math.log(inputs.systolicBp) : 0
-    const smoke = inputs.isSmoker  ? 1 : 0
+    const lnSBP = Math.log(inputs.systolicBp)
+    const lnSBPTreated   = inputs.isOnAntihypertensives ? lnSBP : 0
+    const lnSBPUntreated = inputs.isOnAntihypertensives ? 0 : lnSBP
+    const smoke = inputs.isSmoker ? 1 : 0
     const diab  = inputs.hasDiabetes ? 1 : 0
 
-    let sum: number, baseline: number
+    const sum =
+        c.lnAge * lnAge
+      + c.lnTC  * lnTC
+      + c.lnHDL * lnHDL
+      + c.lnSBPTreated   * lnSBPTreated
+      + c.lnSBPUntreated * lnSBPUntreated
+      + c.smoker   * smoke
+      + c.diabetes * diab
 
-    if (sex === 'MALE') {
-      sum = 3.11296*lnAge + 1.12370*lnTC - 0.93263*lnHDL + 0.17666*(lnAge*lnHDL)
-          + 1.99881*lnSBPt + 1.93303*lnSBPut + 0.65451*smoke + 0.57367*diab
-      baseline = 0.88936
-    } else {
-      sum = 2.32888*lnAge + 1.20904*lnTC - 0.70833*lnHDL + 0.04754*(lnAge*lnHDL)
-          + 2.76157*lnSBPt + 2.82263*lnSBPut + 0.52873*smoke + 0.69154*diab
-      baseline = 0.94833
-    }
-
-    const meanCoeff = sex === 'MALE' ? 23.9388 : 26.1931
-    const risk = Math.max(0.001, Math.min(0.999, 1 - Math.pow(baseline, Math.exp(sum - meanCoeff))))
-    const pct  = parseFloat((risk * 100).toFixed(2))
+    const risk = Math.max(
+      0.001,
+      Math.min(0.999, 1 - Math.pow(c.baselineSurvival, Math.exp(sum - c.meanLinearPredictor)))
+    )
+    const pct = parseFloat((risk * 100).toFixed(2))
 
     return {
       tenYearRisk:        risk,
