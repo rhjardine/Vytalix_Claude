@@ -169,3 +169,33 @@ imports relativos** asumían el árbol canónico `src/...`, `prisma/...`, `tests
 - Tests: **29 passed / 13 skipped** (antes: 0 recolectables)
 - Árbol canónico materializado según `ARCHITECTURE.md`
 - Fuente de verdad única por módulo (sin duplicados)
+
+---
+
+## ADDENDUM 2 — FASE 2: Extensión del data model (decisión de negocio confirmada)
+
+Fecha: 2026-06-01 · Decisión: el usuario confirmó **extender** el modelo más allá
+del MVP cardiovascular hacia el ecosistema Doctor Antivejez (longevidad,
+engagement, consent). Esto **levanta deliberadamente el scope-freeze** de
+`0.9.0-demo`, de forma **aditiva** (sin modificar/eliminar tablas existentes).
+
+### Nuevos dominios (ver DATA_MODEL.md)
+- **8 Longevidad:** `biological_age_assessments` (append-only, longitudinal, reproducible, physician-in-the-loop). `RiskScoreType.BIOLOGICAL_AGE` habilitado.
+- **9 Consent (PHI):** `consent_records` (ledger append-only, HIPAA/GDPR).
+- **10 Engagement:** `programs`, `challenges`, `patient_enrollments`, `engagement_events` (stream append-only).
+- **11 Event store:** `domain_events` (append-only, EventBridge-ready).
+
+### Seguridad
+- +7 tablas con RLS ENABLE+FORCE; +15 políticas (append-only = SELECT/INSERT; mutables += UPDATE).
+- +2 hypertables TimescaleDB (`engagement_events`, `domain_events`).
+- Totales: 18 tablas RLS · 46 políticas · 4 hypertables.
+
+### Hallazgo adicional corregido
+| ID | Hallazgo | Severidad | Acción |
+|----|----------|-----------|--------|
+| GAP-DB-002 | `migration_rls.sql` usaba columnas snake_case pero el schema (sin `@map`) genera columnas camelCase → la migración (RLS, trigger, hypertables) **nunca habría aplicado** | CRÍTICO | Reescrita toda la migración a identificadores `"camelCase"` reales. Verificado estáticamente: 100% de columnas citadas existen en el schema; parens balanceados; simetría ENABLE/FORCE |
+
+### Verificación
+- `prisma format` ✅ · `prisma validate` ✅ (schema válido, relaciones resueltas)
+- `tsc --noEmit` → **0 errores** · vitest **29 passed / 13 skipped** (sin regresión)
+- Validación en vivo contra Postgres+TimescaleDB: pendiente de entorno con extensión (no disponible en sandbox)

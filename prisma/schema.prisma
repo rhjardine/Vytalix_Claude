@@ -30,7 +30,7 @@ datasource db {
 /// No RLS — resolved at session start to set app.current_tenant.
 model Tenant {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug      String   @unique @db.VarChar(63)  // URL-safe identifier, immutable after creation
+  slug      String   @unique @db.VarChar(63) // URL-safe identifier, immutable after creation
   name      String   @db.VarChar(255)
   planTier  PlanTier @default(STARTER)
   isActive  Boolean  @default(true)
@@ -40,6 +40,7 @@ model Tenant {
   // Relations
   organizations Organization[]
   users         User[]
+  domainEvents  DomainEvent[]
 
   @@map("tenants")
 }
@@ -48,7 +49,7 @@ model Tenant {
 /// A tenant can have many organizations with independent configurations.
 model Organization {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String   @db.Uuid                 // RLS anchor — every query filtered here
+  tenantId  String   @db.Uuid // RLS anchor — every query filtered here
   name      String   @db.VarChar(255)
   orgType   OrgType  @default(CLINIC)
   isActive  Boolean  @default(true)
@@ -56,10 +57,12 @@ model Organization {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
   users     User[]
   patients  Patient[]
   protocols Protocol[]
+  // FASE 2 — engagement programs belong to an organization
+  programs  Program[]
 
   @@index([tenantId])
   @@map("organizations")
@@ -72,7 +75,7 @@ model User {
   tenantId       String    @db.Uuid
   organizationId String    @db.Uuid
   email          String    @db.VarChar(255)
-  passwordHash   String    @db.VarChar(255)   // bcrypt, cost factor 12
+  passwordHash   String    @db.VarChar(255) // bcrypt, cost factor 12
   role           UserRole
   firstName      String    @db.VarChar(100)
   lastName       String    @db.VarChar(100)
@@ -82,10 +85,13 @@ model User {
   updatedAt      DateTime  @updatedAt @db.Timestamptz
 
   // Relations
-  tenant          Tenant           @relation(fields: [tenantId], references: [id])
-  organization    Organization     @relation(fields: [organizationId], references: [id])
-  recommendations Recommendation[] @relation("PhysicianRecommendations")
-  auditLogs       AuditLog[]
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id])
+  organization             Organization              @relation(fields: [organizationId], references: [id])
+  recommendations          Recommendation[]          @relation("PhysicianRecommendations")
+  auditLogs                AuditLog[]
+  // FASE 2 — clinician as author of longevity & engagement artifacts
+  biologicalAgeAssessments BiologicalAgeAssessment[] @relation("ClinicianAssessments")
+  programsCreated          Program[]                 @relation("ProgramCreatedBy")
 
   // A user email is unique within a tenant, not globally.
   // Global uniqueness would leak information about which tenants exist.
@@ -105,27 +111,32 @@ model Patient {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId       String        @db.Uuid
   organizationId String        @db.Uuid
-  mrn            String        @db.VarChar(64)  // Medical Record Number from EMR
+  mrn            String        @db.VarChar(64) // Medical Record Number from EMR
   status         PatientStatus @default(ACTIVE)
 
   // Demographics stored as typed columns for queryability in MVP.
   // In V1 these migrate to a FHIR Patient resource jsonb column.
-  firstName       String   @db.VarChar(100)
-  lastName        String   @db.VarChar(100)
-  dateOfBirth     DateTime @db.Date
-  biologicalSex   BiologicalSex
+  firstName     String        @db.VarChar(100)
+  lastName      String        @db.VarChar(100)
+  dateOfBirth   DateTime      @db.Date
+  biologicalSex BiologicalSex
   // No address, no SSN, no insurance ID in MVP — minimal PII surface.
 
-  enrolledAt DateTime  @default(now()) @db.Timestamptz
-  createdAt  DateTime  @default(now()) @db.Timestamptz
-  updatedAt  DateTime  @updatedAt @db.Timestamptz
+  enrolledAt DateTime @default(now()) @db.Timestamptz
+  createdAt  DateTime @default(now()) @db.Timestamptz
+  updatedAt  DateTime @updatedAt @db.Timestamptz
 
   // Relations
-  organization    Organization         @relation(fields: [organizationId], references: [id])
-  observations    ClinicalObservation[]
-  riskScores      RiskScore[]
-  recommendations Recommendation[]
-  healthSnapshot  PatientHealthSnapshot?
+  organization             Organization              @relation(fields: [organizationId], references: [id])
+  observations             ClinicalObservation[]
+  riskScores               RiskScore[]
+  recommendations          Recommendation[]
+  healthSnapshot           PatientHealthSnapshot?
+  // FASE 2 — longevity / engagement / consent
+  biologicalAgeAssessments BiologicalAgeAssessment[]
+  consentRecords           ConsentRecord[]
+  programEnrollments       PatientEnrollment[]
+  engagementEvents         EngagementEvent[]
 
   // mrn is unique per tenant — the same MRN can exist in two different tenants.
   @@unique([tenantId, mrn])
@@ -140,17 +151,17 @@ model Patient {
 /// This is what the physician dashboard reads — avoids recomputing from raw observations.
 /// One row per patient, upserted not inserted.
 model PatientHealthSnapshot {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String   @db.Uuid
-  patientId String   @unique @db.Uuid  // One snapshot per patient
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @unique @db.Uuid // One snapshot per patient
 
   // Latest values for cardiovascular risk calculation (Framingham inputs)
-  latestSystolicBp   Decimal? @db.Decimal(5, 1)  // mmHg
-  latestDiastolicBp  Decimal? @db.Decimal(5, 1)  // mmHg
-  latestLdlMgDl      Decimal? @db.Decimal(6, 1)  // mg/dL
-  latestHdlMgDl      Decimal? @db.Decimal(6, 1)  // mg/dL
+  latestSystolicBp       Decimal? @db.Decimal(5, 1) // mmHg
+  latestDiastolicBp      Decimal? @db.Decimal(5, 1) // mmHg
+  latestLdlMgDl          Decimal? @db.Decimal(6, 1) // mg/dL
+  latestHdlMgDl          Decimal? @db.Decimal(6, 1) // mg/dL
   latestTotalCholesterol Decimal? @db.Decimal(6, 1)
-  latestFastingGlucose   Decimal? @db.Decimal(6, 1)  // mg/dL
+  latestFastingGlucose   Decimal? @db.Decimal(6, 1) // mg/dL
   isSmoker               Boolean?
   hasDiabetes            Boolean?
   isOnAntihypertensives  Boolean?
@@ -160,7 +171,7 @@ model PatientHealthSnapshot {
 
   // Metadata
   lastObservationAt DateTime? @db.Timestamptz
-  snapshotVersion   Int       @default(1)  // incremented on each update, for optimistic locking
+  snapshotVersion   Int       @default(1) // incremented on each update, for optimistic locking
   updatedAt         DateTime  @updatedAt @db.Timestamptz
 
   // Relations
@@ -181,32 +192,32 @@ model PatientHealthSnapshot {
 /// This is the immutable source of truth — observations are never updated,
 /// only superseded by new observations with a correction flag.
 model ClinicalObservation {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String   @db.Uuid
-  patientId String   @db.Uuid
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
 
   // LOINC code identifies the measurement type precisely.
   // Examples: "2093-3" = Total Cholesterol, "8867-4" = Heart Rate,
   //           "2345-7" = Glucose [Mass/volume] in Serum
-  loincCode   String  @db.VarChar(20)
-  displayName String  @db.VarChar(255)  // Human-readable, denormalized for display
+  loincCode   String @db.VarChar(20)
+  displayName String @db.VarChar(255) // Human-readable, denormalized for display
 
   // Value representation — MVP uses simple numeric + unit.
   // In V1 this becomes valueQuantity / valueCodeableConcept per FHIR spec.
-  valueNumeric  Decimal? @db.Decimal(12, 4)
-  valueText     String?  @db.VarChar(500)   // For coded results: "Positive", "Negative"
-  unit          String?  @db.VarChar(50)    // UCUM unit code: "mg/dL", "mmHg", "%"
+  valueNumeric Decimal? @db.Decimal(12, 4)
+  valueText    String?  @db.VarChar(500) // For coded results: "Positive", "Negative"
+  unit         String?  @db.VarChar(50) // UCUM unit code: "mg/dL", "mmHg", "%"
 
   // Reference ranges for this observation (denormalized from lab/device source)
   refRangeLow  Decimal? @db.Decimal(12, 4)
   refRangeHigh Decimal? @db.Decimal(12, 4)
 
   // Provenance
-  sourceSystem  ObservationSource
-  isCorrection  Boolean   @default(false)
-  fhirResourceId String?   @db.VarChar(255)  // FHIR Observation.id if ingested from FHIR   // True = supersedes a previous observation
-  observedAt    DateTime  @db.Timestamptz   // When the measurement was taken (not ingested)
-  ingestedAt    DateTime  @default(now()) @db.Timestamptz
+  sourceSystem   ObservationSource
+  isCorrection   Boolean           @default(false)
+  fhirResourceId String?           @db.VarChar(255) // FHIR Observation.id if ingested from FHIR   // True = supersedes a previous observation
+  observedAt     DateTime          @db.Timestamptz // When the measurement was taken (not ingested)
+  ingestedAt     DateTime          @default(now()) @db.Timestamptz
 
   // Relations
   patient Patient @relation(fields: [patientId], references: [id])
@@ -226,31 +237,31 @@ model ClinicalObservation {
 /// Immutable — new calculation creates new row, never updates existing.
 /// This enables longitudinal tracking of how the score evolves over time.
 model RiskScore {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String    @db.Uuid
-  patientId String    @db.Uuid
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
 
-  scoreType     RiskScoreType
-  value         Decimal       @db.Decimal(6, 4)   // 0.0000 – 1.0000 (probability)
-  valuePercent  Decimal       @db.Decimal(5, 2)   // 0.00 – 100.00 (for display)
-  riskCategory  RiskCategory                       // LOW / MODERATE / HIGH / VERY_HIGH
+  scoreType    RiskScoreType
+  value        Decimal       @db.Decimal(6, 4) // 0.0000 – 1.0000 (probability)
+  valuePercent Decimal       @db.Decimal(5, 2) // 0.00 – 100.00 (for display)
+  riskCategory RiskCategory // LOW / MODERATE / HIGH / VERY_HIGH
 
   // Inputs snapshot — must be stored to reproduce the calculation later.
   // Contains the exact PatientHealthSnapshot values used at computation time.
-  inputSnapshot Json          @db.JsonB
+  inputSnapshot Json @db.JsonB
 
   // Algorithm metadata — which formula/model produced this score
-  algorithmId      String  @db.VarChar(50)   // e.g. "framingham_2008_updated"
-  algorithmVersion String  @db.VarChar(20)   // e.g. "1.0.0"
+  algorithmId      String @db.VarChar(50) // e.g. "framingham_2008_updated"
+  algorithmVersion String @db.VarChar(20) // e.g. "1.0.0"
 
   computedAt DateTime @default(now()) @db.Timestamptz
 
   // Relations
-  patient       Patient         @relation(fields: [patientId], references: [id])
+  patient        Patient          @relation(fields: [patientId], references: [id])
   recommendation Recommendation[]
 
   @@index([tenantId, patientId, scoreType, computedAt(sort: Desc)])
-  @@index([tenantId, riskCategory])  // For dashboard cohort queries
+  @@index([tenantId, riskCategory]) // For dashboard cohort queries
   @@map("risk_scores")
 }
 
@@ -262,19 +273,19 @@ model RiskScore {
 /// Versioning is deferred — current schema stores the active definition directly.
 /// Migration path to full versioning is additive (add protocol_versions table).
 model Protocol {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId       String       @db.Uuid
-  organizationId String       @db.Uuid
-  name           String       @db.VarChar(255)
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String         @db.Uuid
+  organizationId String         @db.Uuid
+  name           String         @db.VarChar(255)
   clinicalDomain ClinicalDomain
-  description    String?      @db.Text
-  isActive       Boolean      @default(true)
-  createdBy      String       @db.Uuid          // User id of creating physician
-  createdAt      DateTime     @default(now()) @db.Timestamptz
-  updatedAt      DateTime     @updatedAt @db.Timestamptz
+  description    String?        @db.Text
+  isActive       Boolean        @default(true)
+  createdBy      String         @db.Uuid // User id of creating physician
+  createdAt      DateTime       @default(now()) @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @db.Timestamptz
 
   // Relations
-  organization Organization  @relation(fields: [organizationId], references: [id])
+  organization Organization   @relation(fields: [organizationId], references: [id])
   rules        ProtocolRule[]
 
   @@index([tenantId])
@@ -286,25 +297,25 @@ model Protocol {
 /// MVP uses a simple threshold model: if (field operator threshold) → action.
 /// json-rules-engine consumes these rows to build its RuleSet at runtime.
 model ProtocolRule {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId   String   @db.Uuid
-  protocolId String   @db.Uuid
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String @db.Uuid
+  protocolId String @db.Uuid
 
-  name        String  @db.VarChar(255)  // Human-readable: "High LDL threshold"
-  description String? @db.Text          // Clinical rationale for this rule
+  name        String  @db.VarChar(255) // Human-readable: "High LDL threshold"
+  description String? @db.Text // Clinical rationale for this rule
 
   // Condition — evaluated against PatientHealthSnapshot fields
   // field: name of the PatientHealthSnapshot field to evaluate
   // operator: gt | gte | lt | lte | eq | between
   // threshold: JSON value (number, bool, or [low, high] for between)
-  conditionField    String  @db.VarChar(100)
-  conditionOperator String  @db.VarChar(20)
+  conditionField     String @db.VarChar(100)
+  conditionOperator  String @db.VarChar(20)
   conditionThreshold Json   @db.JsonB
 
   // Action — what to recommend when the condition is met
-  actionType        ActionType
-  recommendationText String   @db.Text           // Template text for the recommendation
-  urgency           Urgency   @default(ROUTINE)
+  actionType         ActionType
+  recommendationText String     @db.Text // Template text for the recommendation
+  urgency            Urgency    @default(ROUTINE)
 
   // Priority — lower number = evaluated first. Allows conflict resolution.
   priority Int @default(100)
@@ -328,38 +339,38 @@ model ProtocolRule {
 /// A clinical recommendation generated for a patient.
 /// Immutable after creation. Status transitions tracked in audit_logs.
 model Recommendation {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId  String   @db.Uuid
-  patientId String   @db.Uuid
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
 
   // Which protocol and rule triggered this recommendation
-  protocolId     String  @db.Uuid
-  protocolRuleId String  @db.Uuid
+  protocolId     String @db.Uuid
+  protocolRuleId String @db.Uuid
 
   // Linked risk score that contributed to this recommendation (nullable — rule-only recs may not have a score)
   riskScoreId String? @db.Uuid
 
   // The recommendation itself
-  category          ClinicalDomain
-  urgency           Urgency
-  title             String   @db.VarChar(255)
-  body              String   @db.Text           // The actionable recommendation text
-  status            RecommendationStatus @default(PENDING)
+  category ClinicalDomain
+  urgency  Urgency
+  title    String               @db.VarChar(255)
+  body     String               @db.Text // The actionable recommendation text
+  status   RecommendationStatus @default(PENDING)
 
   // Physician assignment
-  assignedTo   String?   @db.Uuid  // User id of responsible physician
-  reviewedBy   String?   @db.Uuid  // User id of reviewing physician
-  reviewedAt   DateTime? @db.Timestamptz
-  reviewNote   String?   @db.Text
+  assignedTo String?   @db.Uuid // User id of responsible physician
+  reviewedBy String?   @db.Uuid // User id of reviewing physician
+  reviewedAt DateTime? @db.Timestamptz
+  reviewNote String?   @db.Text
 
-  createdAt  DateTime  @default(now()) @db.Timestamptz
-  expiresAt  DateTime? @db.Timestamptz  // Null = no expiry
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  expiresAt DateTime? @db.Timestamptz // Null = no expiry
 
   // Relations
-  patient        Patient        @relation(fields: [patientId], references: [id])
-  riskScore      RiskScore?     @relation(fields: [riskScoreId], references: [id])
-  assignedPhysician User?       @relation("PhysicianRecommendations", fields: [assignedTo], references: [id])
-  decisionTrace  DecisionTrace?
+  patient           Patient        @relation(fields: [patientId], references: [id])
+  riskScore         RiskScore?     @relation(fields: [riskScoreId], references: [id])
+  assignedPhysician User?          @relation("PhysicianRecommendations", fields: [assignedTo], references: [id])
+  decisionTrace     DecisionTrace?
 
   @@index([tenantId, patientId, status])
   @@index([tenantId, assignedTo, status])
@@ -371,19 +382,19 @@ model Recommendation {
 /// Contains all evidence evaluated — rules fired, values compared, outcome.
 /// This is what a physician or auditor reads to understand WHY a recommendation exists.
 model DecisionTrace {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId         String   @db.Uuid
-  recommendationId String   @unique @db.Uuid   // 1:1 — enforced by unique constraint
+  id               String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String @db.Uuid
+  recommendationId String @unique @db.Uuid // 1:1 — enforced by unique constraint
 
   // Engine metadata
-  engineVersion String @db.VarChar(20)  // Semver of the rule engine at time of decision
+  engineVersion String @db.VarChar(20) // Semver of the rule engine at time of decision
 
   // Rules evaluation — array of RuleFiredEntry objects:
   // { ruleId, ruleName, passed, conditionField, patientValue, threshold, operator }
   rulesFired Json @db.JsonB
 
   // Risk score context at decision time
-  riskScoreSnapshot Json? @db.JsonB   // { scoreType, value, riskCategory, computedAt }
+  riskScoreSnapshot Json? @db.JsonB // { scoreType, value, riskCategory, computedAt }
 
   // Patient snapshot at decision time — the exact values used
   patientSnapshotAtDecision Json @db.JsonB
@@ -412,14 +423,14 @@ model DecisionTrace {
 model AuditLog {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId     String   @db.Uuid
-  actorId      String?  @db.Uuid      // Null for system actors
+  actorId      String?  @db.Uuid // Null for system actors
   actorRole    String?  @db.VarChar(50)
-  resourceType String   @db.VarChar(100)  // "Patient", "Recommendation", "RiskScore", etc.
+  resourceType String   @db.VarChar(100) // "Patient", "Recommendation", "RiskScore", etc.
   resourceId   String   @db.Uuid
-  action       String   @db.VarChar(50)   // "CREATE", "UPDATE", "STATUS_CHANGE", "VIEW"
+  action       String   @db.VarChar(50) // "CREATE", "UPDATE", "STATUS_CHANGE", "VIEW"
   // diff stores { before: {...}, after: {...} } — null for CREATE (no before state)
   diff         Json?    @db.JsonB
-  ipAddress    String?  @db.VarChar(45)   // IPv4 or IPv6
+  ipAddress    String?  @db.VarChar(45) // IPv4 or IPv6
   userAgent    String?  @db.VarChar(500)
   occurredAt   DateTime @default(now()) @db.Timestamptz
 
@@ -428,7 +439,7 @@ model AuditLog {
 
   @@index([tenantId, resourceType, resourceId])
   @@index([tenantId, actorId, occurredAt(sort: Desc)])
-  @@index([tenantId, occurredAt(sort: Desc)])   // For tenant-wide audit queries
+  @@index([tenantId, occurredAt(sort: Desc)]) // For tenant-wide audit queries
   @@map("audit_logs")
 }
 
@@ -437,9 +448,9 @@ model AuditLog {
 // =============================================================================
 
 enum PlanTier {
-  STARTER      // Single org, up to 500 patients
+  STARTER // Single org, up to 500 patients
   PROFESSIONAL // Multi-org, up to 5000 patients
-  ENTERPRISE   // Unlimited, custom SLA
+  ENTERPRISE // Unlimited, custom SLA
 }
 
 enum OrgType {
@@ -450,11 +461,11 @@ enum OrgType {
 }
 
 enum UserRole {
-  SUPER_ADMIN       // Vytalix staff — cross-tenant access for support
-  ORG_ADMIN         // Manages users and settings within one organization
-  PHYSICIAN         // Full clinical access within their organization
-  CARE_COORDINATOR  // Read access + recommendation status updates
-  VIEWER            // Read-only dashboard access
+  SUPER_ADMIN // Vytalix staff — cross-tenant access for support
+  ORG_ADMIN // Manages users and settings within one organization
+  PHYSICIAN // Full clinical access within their organization
+  CARE_COORDINATOR // Read access + recommendation status updates
+  VIEWER // Read-only dashboard access
 }
 
 enum PatientStatus {
@@ -471,25 +482,25 @@ enum BiologicalSex {
 }
 
 enum ObservationSource {
-  EMR_IMPORT       // Ingested from EMR via FHIR/HL7
-  LAB_IMPORT       // Direct lab system (LIS) integration
-  MANUAL_ENTRY     // Physician or coordinator entered manually
+  EMR_IMPORT // Ingested from EMR via FHIR/HL7
+  LAB_IMPORT // Direct lab system (LIS) integration
+  MANUAL_ENTRY // Physician or coordinator entered manually
   PATIENT_REPORTED // Patient self-reported via PWA
-  DEVICE_SYNC      // Wearable or medical device
+  DEVICE_SYNC // Wearable or medical device
 }
 
 enum RiskScoreType {
-  CARDIOVASCULAR_10Y   // MVP: only this one
+  CARDIOVASCULAR_10Y // Framingham 2008 general CVD
+  BIOLOGICAL_AGE // FASE 2 — longevity: biological vs chronological age
   // DIABETES_T2       -- V1
-  // BIOLOGICAL_AGE    -- V1
   // FRAILTY_INDEX     -- V2
 }
 
 enum RiskCategory {
-  LOW           // < 7.5% 10-year ASCVD risk
-  MODERATE      // 7.5% – 19.9%
-  HIGH          // 20% – 29.9%
-  VERY_HIGH     // >= 30% or established CVD
+  LOW // < 7.5% 10-year ASCVD risk
+  MODERATE // 7.5% – 19.9%
+  HIGH // 20% – 29.9%
+  VERY_HIGH // >= 30% or established CVD
 }
 
 enum ClinicalDomain {
@@ -510,17 +521,334 @@ enum ActionType {
 }
 
 enum Urgency {
-  ROUTINE   // Review at next scheduled visit
-  SOON      // Within 2 weeks
-  URGENT    // Within 48 hours
-  CRITICAL  // Immediate action required
+  ROUTINE // Review at next scheduled visit
+  SOON // Within 2 weeks
+  URGENT // Within 48 hours
+  CRITICAL // Immediate action required
 }
 
 enum RecommendationStatus {
-  PENDING    // Generated, awaiting physician review
-  ACCEPTED   // Physician confirmed action
-  REJECTED   // Physician dismissed with documented reason
-  DEFERRED   // Acknowledged, postponed
-  EXPIRED    // expiresAt passed without action
+  PENDING // Generated, awaiting physician review
+  ACCEPTED // Physician confirmed action
+  REJECTED // Physician dismissed with documented reason
+  DEFERRED // Acknowledged, postponed
+  EXPIRED // expiresAt passed without action
   SUPERSEDED // A newer recommendation replaced this one
+}
+
+// =============================================================================
+// =============================================================================
+// FASE 2 — ECOSYSTEM EXTENSION (longevity · consent · engagement · events)
+//
+// Business decision (confirmed): extend beyond the cardiovascular MVP toward
+// the Doctor Antivejez longevity/engagement ecosystem. This lifts the
+// 0.9.0-demo scope-freeze deliberately and ADDITIVELY:
+//   - No existing table/column is modified or removed.
+//   - Every new table carries tenantId and is RLS-isolated (see migration_rls.sql).
+//   - Append-only physiological/consent/event tables are INSERT-only at the DB.
+//   - Clinical determinism + physician-in-the-loop unchanged: nothing here
+//     produces autonomous clinical action.
+// =============================================================================
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// DOMAIN 8 — LONGEVITY (biological age, the Doctor Antivejez signature metric)
+// Append-only & longitudinal: every assessment is a new immutable row so the
+// patient's aging trajectory ("pace of aging") can be reconstructed exactly.
+// -----------------------------------------------------------------------------
+
+/// A point-in-time biological-age assessment for a patient.
+/// Immutable — a re-assessment is a NEW row (never an update), enabling
+/// longitudinal pace-of-aging analysis. Deterministic: the input feature
+/// vector is persisted so the result is fully reproducible.
+model BiologicalAgeAssessment {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  method           BiologicalAgeMethod // Which biomarker model produced this
+  algorithmId      String              @db.VarChar(64) // e.g. "biophysical_age_v1"
+  algorithmVersion String              @db.VarChar(20) // e.g. "1.0.0"
+
+  chronologicalAge Decimal        @db.Decimal(5, 2) // Years at assessment time
+  biologicalAge    Decimal        @db.Decimal(5, 2) // Estimated biological age (years)
+  // ageGap > 0 => aging faster than chronological; < 0 => younger biologically.
+  ageGap           Decimal        @db.Decimal(5, 2) // biologicalAge - chronologicalAge
+  // Pace of aging (optional, derived across assessments): years of bio-age per
+  // calendar year. 1.0 = aging at expected rate; >1 accelerated; <1 decelerated.
+  paceOfAging      Decimal?       @db.Decimal(4, 2)
+  confidenceTier   ConfidenceTier @default(MEDIUM)
+
+  // Reproducibility: exact feature vector + per-system contributions.
+  // featureVector: { biomarkerLoinc: value, ... } used by the model.
+  featureVector Json  @db.JsonB
+  // systemAges (Doctor Antivejez biophysical model): per-system biological ages,
+  // e.g. { cardiovascular: 58.2, metabolic: 61.0, ... } — null if not applicable.
+  systemAges    Json? @db.JsonB
+
+  // Physician-in-the-loop: an assessment may be clinician-reviewed.
+  assessedBy String? @db.Uuid // User id (clinician) if attended
+  notes      String? @db.Text
+
+  assessedAt DateTime @default(now()) @db.Timestamptz
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient   Patient @relation(fields: [patientId], references: [id])
+  clinician User?   @relation("ClinicianAssessments", fields: [assessedBy], references: [id])
+
+  @@index([tenantId, patientId, assessedAt(sort: Desc)])
+  @@index([tenantId, method, assessedAt(sort: Desc)])
+  @@map("biological_age_assessments")
+}
+
+// -----------------------------------------------------------------------------
+// DOMAIN 9 — CONSENT (PHI governance — HIPAA / GDPR)
+// Append-only ledger: a grant and a later revocation are SEPARATE immutable
+// rows. The patient's current consent state is derived as the latest row per
+// (patientId, consentType). Never updated, never deleted.
+// -----------------------------------------------------------------------------
+
+/// Immutable consent ledger entry. The effective consent for a given type is
+/// the most recent row for that (patient, consentType). Append-only by design
+/// so the full consent history is always auditable and legally defensible.
+model ConsentRecord {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  consentType   ConsentType
+  status        ConsentStatus // GRANTED | REVOKED | EXPIRED
+  // scope: what the consent authorizes, e.g.
+  // { dataCategories: ["labs","wearables"], purposes: ["care","research"] }
+  scope         Json          @db.JsonB
+  policyVersion String        @db.VarChar(40) // Version of the consent text agreed
+
+  // Provenance of the consent act (who/how it was captured).
+  capturedVia ConsentChannel @default(PORTAL)
+  capturedBy  String?        @db.Uuid // User id if staff-assisted
+  evidenceRef String?        @db.VarChar(255) // Signed-doc id / e-sign reference
+  ipAddress   String?        @db.VarChar(45)
+
+  effectiveFrom DateTime  @default(now()) @db.Timestamptz
+  expiresAt     DateTime? @db.Timestamptz
+  recordedAt    DateTime  @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, consentType, recordedAt(sort: Desc)])
+  @@map("consent_records")
+}
+
+// -----------------------------------------------------------------------------
+// DOMAIN 10 — ENGAGEMENT (preventive programs, challenges, gamification)
+// Program/Challenge/PatientEnrollment are mutable config/state tables.
+// EngagementEvent is an append-only behavioral stream (no UPDATE/DELETE).
+// -----------------------------------------------------------------------------
+
+/// A preventive / longevity program offered by an organization
+/// (e.g. "12-week metabolic reset", "Cardiometabolic longevity track").
+model Program {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String @db.Uuid
+  organizationId String @db.Uuid
+
+  name           String         @db.VarChar(255)
+  slug           String         @db.VarChar(80) // URL-safe, unique per tenant
+  description    String?        @db.Text
+  clinicalDomain ClinicalDomain @default(PREVENTIVE)
+  status         ProgramStatus  @default(DRAFT)
+  durationDays   Int? // Nominal program length
+
+  createdBy String   @db.Uuid // User id (clinician/admin)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  creator      User                @relation("ProgramCreatedBy", fields: [createdBy], references: [id])
+  challenges   Challenge[]
+  enrollments  PatientEnrollment[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, organizationId, status])
+  @@map("programs")
+}
+
+/// A discrete, measurable challenge within a program
+/// (e.g. "Walk 8,000 steps/day for 7 days", "Log fasting glucose daily").
+model Challenge {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  programId String @db.Uuid
+
+  name          String        @db.VarChar(255)
+  description   String?       @db.Text
+  challengeType ChallengeType
+  // Target spec, e.g. { metric: "steps", op: "gte", value: 8000, window: "1d" }
+  target        Json          @db.JsonB
+  points        Int           @default(0) // Reward points on completion
+  orderIndex    Int           @default(0) // Display / sequence order
+  isActive      Boolean       @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  program Program @relation(fields: [programId], references: [id])
+
+  @@index([tenantId, programId, orderIndex])
+  @@map("challenges")
+}
+
+/// A patient's enrollment in a program. One active enrollment per
+/// (patient, program); re-enrollment after completion is allowed (new row).
+model PatientEnrollment {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+  programId String @db.Uuid
+
+  status      EnrollmentStatus @default(ACTIVE)
+  pointsTotal Int              @default(0) // Denormalized running total
+  // progress: lightweight summary, e.g. { challengesCompleted: 3, streakDays: 5 }
+  progress    Json?            @db.JsonB
+
+  enrolledAt  DateTime  @default(now()) @db.Timestamptz
+  completedAt DateTime? @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+  program Program @relation(fields: [programId], references: [id])
+
+  @@index([tenantId, patientId, status])
+  @@index([tenantId, programId, status])
+  @@map("patient_enrollments")
+}
+
+/// Append-only behavioral event from a patient inside the engagement layer
+/// (challenge completed, points earned, streak, check-in, etc.).
+/// Immutable — feeds analytics & aggregated insights without mutating state.
+model EngagementEvent {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  enrollmentId String?             @db.Uuid // Optional link to enrollment
+  challengeId  String?             @db.Uuid // Optional link to challenge
+  eventType    EngagementEventType
+  // payload: event-specific data, e.g. { metric: "steps", value: 8200 }
+  payload      Json                @db.JsonB
+  pointsDelta  Int                 @default(0)
+
+  occurredAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, occurredAt(sort: Desc)])
+  @@index([tenantId, eventType, occurredAt(sort: Desc)])
+  @@map("engagement_events")
+}
+
+// -----------------------------------------------------------------------------
+// DOMAIN 11 — DOMAIN EVENT STORE (append-only; EventBridge-ready)
+// Durable persistence behind the in-process event-bus. Lets the system replay
+// and integrate with partners/insurers later without changing producers.
+// -----------------------------------------------------------------------------
+
+/// Append-only domain event. The in-process event bus persists every published
+/// event here for durability, replay, and future external streaming
+/// (e.g. AWS EventBridge). Never updated or deleted.
+model DomainEvent {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  eventType     String  @db.VarChar(120) // e.g. "ObservationAdded"
+  aggregateType String  @db.VarChar(80) // e.g. "Patient", "RiskScore"
+  aggregateId   String  @db.Uuid // Id of the aggregate
+  correlationId String? @db.VarChar(64) // Trace id across the pipeline
+  schemaVersion String  @default("1.0") @db.VarChar(20)
+  payload       Json    @db.JsonB
+
+  occurredAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, occurredAt(sort: Desc)])
+  @@index([tenantId, aggregateType, aggregateId, occurredAt(sort: Desc)])
+  @@index([tenantId, eventType, occurredAt(sort: Desc)])
+  @@map("domain_events")
+}
+
+// =============================================================================
+// FASE 2 ENUMS
+// =============================================================================
+
+enum BiologicalAgeMethod {
+  BIOPHYSICAL // Doctor Antivejez biophysical multi-system model
+  PHENOTYPIC // Phenotypic age from clinical biomarkers (Levine-style)
+  EPIGENETIC // Methylation clock (future external lab integration)
+}
+
+enum ConfidenceTier {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ConsentType {
+  DATA_PROCESSING // Process PHI for care delivery
+  RESEARCH_USE // Use de-identified data for research
+  WEARABLE_SYNC // Ingest device/wearable data
+  MARKETING_COMMS // Engagement / marketing communications
+  THIRD_PARTY_SHARING // Share with partners / insurers
+}
+
+enum ConsentStatus {
+  GRANTED
+  REVOKED
+  EXPIRED
+}
+
+enum ConsentChannel {
+  PORTAL // Patient self-service portal / PWA
+  IN_PERSON // Staff-assisted, in clinic
+  API // Captured via external integration
+  IMPORTED // Migrated from a prior system
+}
+
+enum ProgramStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum ChallengeType {
+  ACTIVITY // Steps, exercise minutes
+  MEASUREMENT // Log a biomarker/observation
+  ADHERENCE // Medication / protocol adherence
+  EDUCATION // Complete a learning module
+  HABIT // Sleep, hydration, nutrition habit
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  DROPPED
+  PAUSED
+}
+
+enum EngagementEventType {
+  ENROLLED
+  CHALLENGE_STARTED
+  CHALLENGE_COMPLETED
+  MEASUREMENT_LOGGED
+  POINTS_EARNED
+  STREAK_ACHIEVED
+  PROGRAM_COMPLETED
+  DROPPED_OUT
 }
