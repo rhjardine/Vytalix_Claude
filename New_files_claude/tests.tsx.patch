@@ -1,0 +1,163 @@
+// =============================================================================
+// PATCH PARA tests.tsx — Sprint 3
+//
+// INSTRUCCIÓN PARA CLAUDE CODE:
+//   Abrir src/components/landing/tests.tsx y aplicar los siguientes cambios.
+//   Son 2 cambios quirúrgicos. NO modificar nada más del archivo.
+//
+// CAMBIO 1: Agregar imports al inicio del archivo (después de los imports React)
+// CAMBIO 2: Reemplazar la función processImage completa
+// CAMBIO 3: Reemplazar el bloque `else` del botón "Siguiente/Calcular resultado"
+// =============================================================================
+
+
+// ─── CAMBIO 1: IMPORTS ────────────────────────────────────────────────────────
+// Agregar después de los imports existentes en tests.tsx:
+
+/*
+import { funnelApi } from '@/services/api'
+import { usePublicFunnelStore } from '@/store/usePublicFunnelStore'
+import { mapDimensiones, inferAgeGroup } from '@/types/funnel'
+*/
+
+
+// ─── CAMBIO 2: processImage ───────────────────────────────────────────────────
+// Dentro de FaceAgeModal, REEMPLAZAR este bloque:
+//
+// ANTES (código actual con Math.random):
+/*
+  const processImage = async (base64: string) => {
+    setCapturedImage(base64)
+    setPhase('analyzing')
+
+    // Simulate analysis
+    await new Promise(r => setTimeout(r, 2500))
+
+    const mockResult = {
+      estimatedAge: Math.floor(35 + Math.random() * 25),
+      confidence: 0.72 + Math.random() * 0.2,
+      analysisPoints: 22 + Math.floor(Math.random() * 8),
+    }
+
+    setResult(mockResult)
+    setPhase('result')
+  }
+*/
+
+// DESPUÉS (conectado a funnelApi — determinístico en dev, real en prod):
+/*
+  const processImage = async (base64: string) => {
+    setCapturedImage(base64)
+    setPhase('analyzing')
+
+    const store = usePublicFunnelStore.getState()
+
+    try {
+      const facialResult = await funnelApi.analyzeFacial(
+        base64,
+        undefined,               // sessionId opcional
+        store.leadId ?? undefined // vincular al lead si ya existe
+      )
+
+      // Guardar en el store global para correlación con el lead
+      store.setFacialResult(facialResult)
+
+      setResult({
+        estimatedAge:   facialResult.estimatedAge,
+        confidence:     facialResult.confidence,
+        analysisPoints: facialResult.analysisPoints,
+      })
+      setPhase('result')
+    } catch (err) {
+      // Fallback graceful: si el API falla, mostrar resultado neutro
+      console.error('[FaceAgeModal] analyzeFacial failed:', err)
+      setResult({
+        estimatedAge:   45,
+        confidence:     0.75,
+        analysisPoints: 22,
+      })
+      setPhase('result')
+    }
+  }
+*/
+
+
+// ─── CAMBIO 3: next() con submitAssessment ────────────────────────────────────
+// Dentro de CellularAgeModal (o el modal del test de 45 preguntas),
+// REEMPLAZAR el bloque else del botón Siguiente/Calcular:
+//
+// ANTES:
+/*
+  } else {
+    const scoreResult = calcularScore(answers)
+    setResult(scoreResult)
+    setShowResult(true)
+  }
+*/
+
+// DESPUÉS:
+/*
+  } else {
+    const scoreResult = calcularScore(answers)
+    setResult(scoreResult)
+    setShowResult(true)
+
+    // Persistir el assessment en el backend (no bloquear la UI)
+    const store = usePublicFunnelStore.getState()
+    const now = new Date().toISOString()
+
+    funnelApi.submitAssessment({
+      score:           scoreResult.score,
+      category:        scoreResult.category,
+      yearsBiological: scoreResult.yearsBiological,
+      chronologicalAgeGroup: inferAgeGroup(answers),
+      dimensions:      mapDimensiones(scoreResult.dimensiones),
+      answersPayload:  answers,
+      completedAt:     now,
+      deviceType:      window.innerWidth < 768 ? 'mobile' : 'desktop',
+    })
+      .then(({ id }) => {
+        store.setAssessmentId(id)
+        store.setVitalityResult({
+          score:           scoreResult.score,
+          category:        scoreResult.category,
+          yearsBiological: scoreResult.yearsBiological,
+          chronologicalAgeGroup: inferAgeGroup(answers),
+          dimensions:      mapDimensiones(scoreResult.dimensiones),
+          answersPayload:  answers,
+          completedAt:     now,
+        })
+      })
+      .catch(err => {
+        // No bloquear la UI si el API falla — el usuario ya ve su resultado
+        console.warn('[CellularAgeModal] submitAssessment failed (non-blocking):', err)
+      })
+  }
+*/
+
+
+// =============================================================================
+// NOTAS DE IMPLEMENTACIÓN
+// =============================================================================
+//
+// 1. usePublicFunnelStore.getState() — forma correcta de leer el store
+//    fuera de un componente React (dentro de callbacks async)
+//
+// 2. El submitAssessment es fire-and-forget (.then/.catch sin await)
+//    El usuario ve su resultado INMEDIATAMENTE — la persistencia es
+//    secundaria y no bloquea la experiencia.
+//
+// 3. mapDimensiones() traduce el campo 'dimensiones' del calcularScore()
+//    existente al contrato VitalityDimensions del backend:
+//    { grupo1 → energiaEstadoMental, grupo2 → suenoCognicion, ... }
+//
+// 4. inferAgeGroup() lee las respuestas R43/R44/R45 (preguntas de edad)
+//    para determinar el grupo cronológico del usuario.
+//
+// 5. En desarrollo (VITE_USE_MOCKS=true), funnelApi.analyzeFacial()
+//    devuelve un resultado DETERMINÍSTICO basado en hash de la imagen.
+//    Mismo input → misma edad estimada siempre. Cero Math.random().
+//
+// 6. En producción (VITE_USE_MOCKS=false) y VISION_PROVIDER=mock en
+//    el backend, el servidor también es determinístico.
+//    Para activar un proveedor real: VISION_PROVIDER=openai en .env

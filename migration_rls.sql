@@ -1,213 +1,308 @@
 -- =============================================================================
--- Vytalix MVP — Migration: Row-Level Security + TimescaleDB setup
--- File: migrations/0001_rls_and_timescale/migration.sql
--- Run AFTER `prisma migrate deploy` creates the tables.
+-- prisma/migration_rls.sql
+-- Row Level Security + TimescaleDB hypertables + performance indexes
+-- Run AFTER: npx prisma migrate deploy
+-- Command: psql $DATABASE_URL -f prisma/migration_rls.sql
 -- =============================================================================
 
--- ---------------------------------------------------------------------------
--- 0. Enable TimescaleDB extension (must be superuser)
--- ---------------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- ── Enable RLS on all tenant-scoped tables ────────────────────────
 
--- Convert clinical_observations to a hypertable partitioned by observed_at.
--- chunk_time_interval = 1 month balances query performance vs number of chunks.
+ALTER TABLE tenants                    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users                      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patients                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE patient_health_snapshots   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clinical_observations      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE risk_scores                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE decision_traces            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recommendations            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE biological_age_assessments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE preventive_scores          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE engagement_events          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE engagement_scores          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referral_events            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE consent_records            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE biophysics_boards          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs                 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_events             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE funnel_leads               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE funnel_assessments         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE funnel_bookings            ENABLE ROW LEVEL SECURITY;
+
+-- ── RLS Policies — tenant isolation ──────────────────────────────
+-- Pattern: app.current_tenant_id set via SET LOCAL before every query
+
+DO $$ DECLARE
+  tbl TEXT;
+  tables TEXT[] := ARRAY[
+    'users','patients','patient_health_snapshots','clinical_observations',
+    'risk_scores','decision_traces','recommendations','biological_age_assessments',
+    'preventive_scores','engagement_events','engagement_scores','referral_events',
+    'api_keys','consent_records','biophysics_boards','audit_logs',
+    'billing_events','funnel_leads','funnel_assessments','funnel_bookings'
+  ];
+BEGIN
+  FOREACH tbl IN ARRAY tables LOOP
+    EXECUTE format('
+      DROP POLICY IF EXISTS tenant_isolation ON %I;
+      CREATE POLICY tenant_isolation ON %I
+        USING ("tenantId"::TEXT = current_setting(''app.current_tenant_id'', TRUE));
+    ', tbl, tbl);
+  END LOOP;
+END $$;
+
+-- Special policy: tenants table — only accessible by superuser/service role
+CREATE POLICY tenant_self ON tenants
+  USING (id::TEXT = current_setting('app.current_tenant_id', TRUE));
+
+-- calculation_versions is global (no tenant column)
+-- api_keys lookup bypasses RLS for auth (done via superuser connection)
+
+-- ── TimescaleDB hypertables ───────────────────────────────────────
+-- Convert high-volume time-series tables to hypertables
+
 SELECT create_hypertable(
-  'clinical_observations',
-  'observed_at',
+  'clinical_observations', 'observed_at',
   chunk_time_interval => INTERVAL '1 month',
   if_not_exists => TRUE
 );
 
--- Also convert audit_logs to hypertable for efficient range queries.
 SELECT create_hypertable(
-  'audit_logs',
-  'occurred_at',
+  'engagement_events', 'occurred_at',
   chunk_time_interval => INTERVAL '1 month',
   if_not_exists => TRUE
 );
 
--- ---------------------------------------------------------------------------
--- 1. Enable RLS on all clinical tables
---    The `tenants` table is deliberately excluded — it is the bootstrap table.
--- ---------------------------------------------------------------------------
-ALTER TABLE organizations         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users                 ENABLE ROW LEVEL SECURITY;
-ALTER TABLE patients              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE patient_health_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE clinical_observations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE risk_scores           ENABLE ROW LEVEL SECURITY;
-ALTER TABLE protocols             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE protocol_rules        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE recommendations       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE decision_traces       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_logs            ENABLE ROW LEVEL SECURITY;
+SELECT create_hypertable(
+  'audit_logs', 'created_at',
+  chunk_time_interval => INTERVAL '3 months',
+  if_not_exists => TRUE
+);
 
--- Force RLS even for table owners (critical — without this, the DB owner bypasses policies).
-ALTER TABLE organizations         FORCE ROW LEVEL SECURITY;
-ALTER TABLE users                 FORCE ROW LEVEL SECURITY;
-ALTER TABLE patients              FORCE ROW LEVEL SECURITY;
-ALTER TABLE patient_health_snapshots FORCE ROW LEVEL SECURITY;
-ALTER TABLE clinical_observations FORCE ROW LEVEL SECURITY;
-ALTER TABLE risk_scores           FORCE ROW LEVEL SECURITY;
-ALTER TABLE protocols             FORCE ROW LEVEL SECURITY;
-ALTER TABLE protocol_rules        FORCE ROW LEVEL SECURITY;
-ALTER TABLE recommendations       FORCE ROW LEVEL SECURITY;
-ALTER TABLE decision_traces       FORCE ROW LEVEL SECURITY;
-ALTER TABLE audit_logs            FORCE ROW LEVEL SECURITY;
+SELECT create_hypertable(
+  'billing_events', 'occurred_at',
+  chunk_time_interval => INTERVAL '1 month',
+  if_not_exists => TRUE
+);
 
--- ---------------------------------------------------------------------------
--- 2. RLS policies — SELECT, INSERT, UPDATE
---    Pattern: tenant_id must equal the session-local variable app.current_tenant.
---    This variable is SET by the Prisma middleware on every connection checkout.
---
---    Separate policies per command (SELECT/INSERT/UPDATE) because:
---    - audit_logs needs INSERT-only (no UPDATE/DELETE — append-only enforcement)
---    - decision_traces needs INSERT-only (immutable)
---    - All others need SELECT + INSERT + UPDATE (no DELETE — soft deletes via status)
--- ---------------------------------------------------------------------------
+-- ── TimescaleDB compression (activate after 30 days) ─────────────
+ALTER TABLE clinical_observations SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = '"tenantId","patientId"',
+  timescaledb.compress_orderby   = 'observed_at DESC'
+);
+SELECT add_compression_policy('clinical_observations', INTERVAL '30 days', if_not_exists => TRUE);
 
--- Helper: current tenant as UUID
--- We cast to uuid to prevent type confusion attacks (passing a non-uuid string).
--- Returns NULL if the variable is not set, which causes all RLS checks to fail
--- safely (no rows returned / no writes allowed).
+ALTER TABLE engagement_events SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = '"tenantId","patientId"',
+  timescaledb.compress_orderby   = 'occurred_at DESC'
+);
+SELECT add_compression_policy('engagement_events', INTERVAL '30 days', if_not_exists => TRUE);
 
--- organizations
-CREATE POLICY org_tenant_isolation_select ON organizations
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY org_tenant_isolation_insert ON organizations
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY org_tenant_isolation_update ON organizations
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- ── Performance indexes (additional, beyond Prisma-generated) ────
 
--- users
-CREATE POLICY users_tenant_isolation_select ON users
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY users_tenant_isolation_insert ON users
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY users_tenant_isolation_update ON users
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- Funnel conversion funnel query
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_funnel_leads_tenant_status_created
+  ON funnel_leads ("tenantId", status, "createdAt" DESC);
 
--- patients
-CREATE POLICY patients_tenant_isolation_select ON patients
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY patients_tenant_isolation_insert ON patients
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY patients_tenant_isolation_update ON patients
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- Biological age cohort queries (InsightsService)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_bio_age_tenant_type_status
+  ON biological_age_assessments ("tenantId", "assessmentType", "ageStatus", "assessedAt" DESC);
 
--- patient_health_snapshots
-CREATE POLICY snapshots_tenant_isolation_select ON patient_health_snapshots
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY snapshots_tenant_isolation_insert ON patient_health_snapshots
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY snapshots_tenant_isolation_update ON patient_health_snapshots
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- Referral conversion tracking
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_referral_tenant_status_generated
+  ON referral_events ("tenantId", status, "generatedAt" DESC);
 
--- clinical_observations
-CREATE POLICY obs_tenant_isolation_select ON clinical_observations
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY obs_tenant_isolation_insert ON clinical_observations
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
--- No UPDATE policy — observations are immutable. Corrections are new rows.
+-- Patient health snapshot lookup (most common query path)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_snapshot_tenant_patient
+  ON patient_health_snapshots ("tenantId", "patientId");
 
--- risk_scores
-CREATE POLICY scores_tenant_isolation_select ON risk_scores
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY scores_tenant_isolation_insert ON risk_scores
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
--- No UPDATE policy — scores are immutable. New calculation = new row.
+-- Billing aggregation (monthly invoice)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_billing_tenant_month
+  ON billing_events ("tenantId", DATE_TRUNC('month', "occurredAt"));
 
--- protocols
-CREATE POLICY protocols_tenant_isolation_select ON protocols
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY protocols_tenant_isolation_insert ON protocols
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY protocols_tenant_isolation_update ON protocols
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- API key hash lookup (hot path — every v2 request)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_api_keys_hash
+  ON api_keys ("keyHash") WHERE "isActive" = TRUE;
 
--- protocol_rules
-CREATE POLICY rules_tenant_isolation_select ON protocol_rules
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY rules_tenant_isolation_insert ON protocol_rules
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY rules_tenant_isolation_update ON protocol_rules
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
+-- ── PatientHealthSnapshot trigger (auto-update on observation insert) ──
 
--- recommendations
-CREATE POLICY recs_tenant_isolation_select ON recommendations
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY recs_tenant_isolation_insert ON recommendations
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY recs_tenant_isolation_update ON recommendations
-  FOR UPDATE USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-
--- decision_traces — INSERT ONLY (immutable audit artifact)
-CREATE POLICY traces_tenant_isolation_select ON decision_traces
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY traces_tenant_isolation_insert ON decision_traces
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
--- No UPDATE, no DELETE policy — immutability enforced at DB level.
-
--- audit_logs — INSERT ONLY (append-only)
-CREATE POLICY audit_tenant_isolation_select ON audit_logs
-  FOR SELECT USING (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
-CREATE POLICY audit_tenant_isolation_insert ON audit_logs
-  FOR INSERT WITH CHECK (tenant_id = current_setting('app.current_tenant', TRUE)::uuid);
--- No UPDATE, no DELETE — ever.
-
--- ---------------------------------------------------------------------------
--- 3. DB trigger: auto-update PatientHealthSnapshot on new ClinicalObservation
---    This keeps the snapshot fresh without application-layer polling.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION update_patient_health_snapshot()
+CREATE OR REPLACE FUNCTION update_patient_snapshot()
 RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO patient_health_snapshots (
-    id, tenant_id, patient_id,
-    latest_systolic_bp, latest_diastolic_bp,
-    latest_ldl_mg_dl, latest_hdl_mg_dl,
-    latest_total_cholesterol, latest_fasting_glucose,
-    last_observation_at, updated_at
+    id, "tenantId", "patientId",
+    "latestTotalCholesterol", "latestHdlMgDl", "latestLdlMgDl",
+    "latestSystolicBp", "latestFastingGlucose", "latestBmi",
+    "latestHbA1c", "latestCreatinine", "latestHsCrp",
+    "snapshotVersion", "updatedAt"
   )
   VALUES (
-    gen_random_uuid(), NEW.tenant_id, NEW.patient_id,
-    CASE WHEN NEW.loinc_code = '8480-6' THEN NEW.value_numeric ELSE NULL END,  -- Systolic BP
-    CASE WHEN NEW.loinc_code = '8462-4' THEN NEW.value_numeric ELSE NULL END,  -- Diastolic BP
-    CASE WHEN NEW.loinc_code = '2089-1' THEN NEW.value_numeric ELSE NULL END,  -- LDL
-    CASE WHEN NEW.loinc_code = '2085-9' THEN NEW.value_numeric ELSE NULL END,  -- HDL
-    CASE WHEN NEW.loinc_code = '2093-3' THEN NEW.value_numeric ELSE NULL END,  -- Total Chol
-    CASE WHEN NEW.loinc_code = '2345-7' THEN NEW.value_numeric ELSE NULL END,  -- Fasting Glucose
-    NEW.observed_at, NOW()
+    gen_random_uuid(), NEW."tenantId", NEW."patientId",
+    CASE WHEN NEW."loincCode" = '2093-3' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '2085-9' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '2089-1' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '8480-6' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '2345-7' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '39156-5' THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '4548-4'  THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '2160-0'  THEN NEW.value ELSE NULL END,
+    CASE WHEN NEW."loincCode" = '30522-7' THEN NEW.value ELSE NULL END,
+    1, NOW()
   )
-  ON CONFLICT (patient_id) DO UPDATE SET
-    latest_systolic_bp = CASE
-      WHEN NEW.loinc_code = '8480-6' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_systolic_bp END,
-    latest_diastolic_bp = CASE
-      WHEN NEW.loinc_code = '8462-4' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_diastolic_bp END,
-    latest_ldl_mg_dl = CASE
-      WHEN NEW.loinc_code = '2089-1' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_ldl_mg_dl END,
-    latest_hdl_mg_dl = CASE
-      WHEN NEW.loinc_code = '2085-9' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_hdl_mg_dl END,
-    latest_total_cholesterol = CASE
-      WHEN NEW.loinc_code = '2093-3' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_total_cholesterol END,
-    latest_fasting_glucose = CASE
-      WHEN NEW.loinc_code = '2345-7' THEN NEW.value_numeric
-      ELSE patient_health_snapshots.latest_fasting_glucose END,
-    last_observation_at = GREATEST(
-      patient_health_snapshots.last_observation_at, NEW.observed_at
+  ON CONFLICT ("tenantId", "patientId") DO UPDATE SET
+    "latestTotalCholesterol" = COALESCE(
+      CASE WHEN NEW."loincCode" = '2093-3' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestTotalCholesterol"
     ),
-    snapshot_version = patient_health_snapshots.snapshot_version + 1,
-    updated_at = NOW();
+    "latestHdlMgDl" = COALESCE(
+      CASE WHEN NEW."loincCode" = '2085-9' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestHdlMgDl"
+    ),
+    "latestLdlMgDl" = COALESCE(
+      CASE WHEN NEW."loincCode" = '2089-1' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestLdlMgDl"
+    ),
+    "latestSystolicBp" = COALESCE(
+      CASE WHEN NEW."loincCode" = '8480-6' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestSystolicBp"
+    ),
+    "latestFastingGlucose" = COALESCE(
+      CASE WHEN NEW."loincCode" = '2345-7' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestFastingGlucose"
+    ),
+    "latestBmi" = COALESCE(
+      CASE WHEN NEW."loincCode" = '39156-5' THEN NEW.value ELSE NULL END,
+      patient_health_snapshots."latestBmi"
+    ),
+    "snapshotVersion" = patient_health_snapshots."snapshotVersion" + 1,
+    "updatedAt" = NOW();
+
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;  -- SECURITY DEFINER runs as function owner, bypassing RLS safely.
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE TRIGGER trg_update_health_snapshot
+DROP TRIGGER IF EXISTS trg_update_snapshot ON clinical_observations;
+CREATE TRIGGER trg_update_snapshot
   AFTER INSERT ON clinical_observations
-  FOR EACH ROW EXECUTE FUNCTION update_patient_health_snapshot();
+  FOR EACH ROW EXECUTE FUNCTION update_patient_snapshot();
 
+-- ── Continuous aggregates (TimescaleDB — biological age trends) ───
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS bio_age_monthly_stats
+WITH (timescaledb.continuous) AS
+  SELECT
+    "tenantId",
+    "assessmentType",
+    time_bucket('1 month', "assessedAt") AS month,
+    COUNT(*)::INT                         AS assessment_count,
+    ROUND(AVG("biologicalAge"::FLOAT)::NUMERIC, 2)   AS avg_biological_age,
+    ROUND(AVG("differentialAge"::FLOAT)::NUMERIC, 2) AS avg_differential,
+    SUM(CASE WHEN "ageStatus" = 'REJUVENECIDO' THEN 1 ELSE 0 END)::INT AS rejuvenecido_count,
+    SUM(CASE WHEN "ageStatus" = 'ENVEJECIDO'   THEN 1 ELSE 0 END)::INT AS envejecido_count
+  FROM biological_age_assessments
+  GROUP BY "tenantId", "assessmentType", time_bucket('1 month', "assessedAt")
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+  'bio_age_monthly_stats',
+  start_offset => INTERVAL '3 months',
+  end_offset   => INTERVAL '1 hour',
+  schedule_interval => INTERVAL '1 hour',
+  if_not_exists => TRUE
+);
+
+-- ── Funnel conversion tracking view ──────────────────────────────
+
+CREATE OR REPLACE VIEW funnel_conversion_summary AS
+  SELECT
+    fl."tenantId",
+    DATE_TRUNC('week', fl."createdAt") AS week,
+    COUNT(*)                           AS leads_captured,
+    COUNT(fa.id)                       AS leads_assessed,
+    COUNT(fb.id)                       AS leads_booked,
+    COUNT(fl."convertedToPatientId")   AS leads_converted,
+    ROUND(
+      100.0 * COUNT(fb.id) / NULLIF(COUNT(*), 0), 1
+    ) AS booking_rate_pct,
+    ROUND(
+      100.0 * COUNT(fl."convertedToPatientId") / NULLIF(COUNT(*), 0), 1
+    ) AS conversion_rate_pct
+  FROM funnel_leads fl
+  LEFT JOIN LATERAL (
+    SELECT id FROM funnel_assessments WHERE "leadId" = fl.id LIMIT 1
+  ) fa ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT id FROM funnel_bookings WHERE "leadId" = fl.id LIMIT 1
+  ) fb ON TRUE
+  GROUP BY fl."tenantId", DATE_TRUNC('week', fl."createdAt")
+  ORDER BY week DESC;
+
+-- ── Demo seed data (development only) ────────────────────────────
+
+DO $$
+BEGIN
+  IF current_setting('app.seed_demo', TRUE) = 'true' THEN
+
+    -- Default tenant for funnel
+    INSERT INTO tenants (id, name, slug, plan, "monthlyApiLimit", "createdAt", "updatedAt")
+    VALUES (
+      '00000000-0000-0000-0000-000000000001',
+      'Doctor Antivejez', 'doctor-antivejez', 'PROFESSIONAL', 0, NOW(), NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    -- Disglobal tenant
+    INSERT INTO tenants (id, name, slug, plan, "monthlyApiLimit", "revenueShareRatio", "createdAt", "updatedAt")
+    VALUES (
+      '00000000-0000-0000-0000-000000000002',
+      'Disglobal Marketplace', 'disglobal', 'ENTERPRISE', 0, 0.30, NOW(), NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    -- Demo Disglobal API Key (hash of "vyx_dis_k1_DEMO_KEY_2024")
+    INSERT INTO api_keys (
+      id, "tenantId", name, "keyHash", "keyPrefix",
+      permissions, "rateLimitTier", "createdBy", "isActive", "createdAt"
+    ) VALUES (
+      gen_random_uuid(),
+      '00000000-0000-0000-0000-000000000002',
+      'Disglobal Demo Key',
+      encode(sha256('vyx_dis_k1_DEMO_KEY_2024'::bytea), 'hex'),
+      'vyx_dis_',
+      '{"vitality":["read","write"],"preventive":["write"],"referral":["read"],"engagement":["write"],"insights":["read"]}'::jsonb,
+      'PROFESSIONAL',
+      '00000000-0000-0000-0000-000000000001',
+      TRUE, NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Demo seed data inserted';
+  END IF;
+END $$;
+
+-- ── Audit trail: prevent UPDATE/DELETE on immutable tables ────────
+
+CREATE OR REPLACE FUNCTION prevent_modification()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'Table % is append-only. Modifications are not permitted.',
+    TG_TABLE_NAME;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_immutable_assessments ON biological_age_assessments;
+CREATE TRIGGER trg_immutable_assessments
+  BEFORE UPDATE OR DELETE ON biological_age_assessments
+  FOR EACH ROW EXECUTE FUNCTION prevent_modification();
+
+DROP TRIGGER IF EXISTS trg_immutable_audit ON audit_logs;
+CREATE TRIGGER trg_immutable_audit
+  BEFORE UPDATE OR DELETE ON audit_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_modification();
+
+DROP TRIGGER IF EXISTS trg_immutable_billing ON billing_events;
+CREATE TRIGGER trg_immutable_billing
+  BEFORE UPDATE OR DELETE ON billing_events
+  FOR EACH ROW EXECUTE FUNCTION prevent_modification();
+
+RAISE NOTICE '✅ Vytalix RLS + TimescaleDB + triggers applied successfully';

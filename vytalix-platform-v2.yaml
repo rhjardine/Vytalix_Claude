@@ -1,0 +1,670 @@
+openapi: "3.1.0"
+info:
+  title: Vytalix Health Intelligence Platform API
+  version: "2.0.0"
+  description: |
+    API-first preventive health intelligence platform.
+    Powered by Doctor Antivejez clinical algorithms.
+    
+    **Authentication:**
+    - Public funnel endpoints: No auth required
+    - Partner APIs (/api/v2/*): `X-API-Key` header
+    - Clinical APIs (/v1/*): `Authorization: Bearer <JWT>` + `X-Tenant-ID`
+  contact:
+    name: Vytalix Platform
+    email: integrations@vytalix.health
+    url: https://docs.vytalix.health
+  license:
+    name: Proprietary
+    url: https://vytalix.health/terms
+
+servers:
+  - url: https://api.vytalix.health
+    description: Production
+  - url: https://sandbox.api.vytalix.health
+    description: Sandbox (Disglobal integration testing)
+  - url: http://localhost:3001
+    description: Local development
+
+tags:
+  - name: Health
+    description: Platform health and observability
+  - name: Funnel
+    description: Public lead capture and vitality assessment (no auth)
+  - name: BioAge
+    description: Vytalix BioAge API — Biological age assessment
+  - name: Preventive
+    description: Vytalix Preventive Score API — Composite health score
+  - name: Referral
+    description: Vytalix Smart Referral API — Premium referral CTAs
+  - name: Engagement
+    description: Vytalix Wellness Engagement API — Behavioral tracking
+  - name: Insights
+    description: Vytalix Population Insights API — Anonymized cohort analytics
+  - name: Admin
+    description: Tenant management and billing (internal)
+
+# ─── Security Schemes ────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: "Partner API key (Disglobal, EMR integrations)"
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Physician/admin JWT token"
+
+  # ─── Reusable Schemas ──────────────────────────────────────────
+
+  schemas:
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status, detail, correlationId]
+      properties:
+        type:          { type: string, format: uri }
+        title:         { type: string }
+        status:        { type: integer }
+        detail:        { type: string }
+        correlationId: { type: string, format: uuid }
+
+    DimensionalMeasurement:
+      type: object
+      required: [high, long, width]
+      properties:
+        high:  { type: number, minimum: 0.1 }
+        long:  { type: number, minimum: 0.1 }
+        width: { type: number, minimum: 0.1 }
+
+    BiophysicsPartialAges:
+      type: object
+      properties:
+        fatAge:       { type: number }
+        bmiAge:       { type: number }
+        reflexesAge:  { type: number }
+        visualAge:    { type: number }
+        balanceAge:   { type: number }
+        hydrationAge: { type: number }
+        systolicAge:  { type: number }
+        diastolicAge: { type: number }
+
+    AgeStatus:
+      type: string
+      enum: [REJUVENECIDO, NORMAL, ENVEJECIDO]
+
+    ReferralCTA:
+      type: object
+      properties:
+        eligible:         { type: boolean }
+        referralType:     { type: string }
+        urgency:          { type: string, enum: [URGENT, SOON, ROUTINE] }
+        triggerReason:    { type: string }
+        ctaPayload:
+          type: object
+          properties:
+            headline:         { type: string }
+            subheadline:      { type: string }
+            ctaLabel:         { type: string }
+            ctaUrl:           { type: string, format: uri }
+            urgencyLabel:     { type: string }
+            valueProposition: { type: string }
+
+    BiologicalAgeAssessmentResult:
+      type: object
+      required: [assessmentId, biologicalAge, differentialAge, ageStatus, partialAges, assessedAt]
+      properties:
+        assessmentId:     { type: string, format: uuid }
+        biologicalAge:    { type: number, example: 42.0 }
+        differentialAge:  { type: number, example: -3.0 }
+        ageStatus:        { $ref: '#/components/schemas/AgeStatus' }
+        partialAges:      { $ref: '#/components/schemas/BiophysicsPartialAges' }
+        riskSignals:      { type: array, items: { type: string } }
+        referralCTA:      { $ref: '#/components/schemas/ReferralCTA', nullable: true }
+        assessedAt:       { type: string, format: date-time }
+        algorithmVersion: { type: string, example: "daaa-biophysics-v2.1.0" }
+
+    FunnelLeadResult:
+      type: object
+      required: [leadId, status, step, token]
+      properties:
+        leadId:  { type: string, format: uuid }
+        status:  { type: string, enum: [CAPTURED, ASSESSED, BOOKED, CONVERTED] }
+        step:    { type: string }
+        token:   { type: string }
+
+    FunnelAssessmentResult:
+      type: object
+      required: [assessmentId, biologicalAge, differentialAge, ageStatus, message, showCta]
+      properties:
+        assessmentId:    { type: string, format: uuid }
+        biologicalAge:   { type: number }
+        differentialAge: { type: number }
+        ageStatus:       { $ref: '#/components/schemas/AgeStatus' }
+        partialAges:     { type: object, additionalProperties: { type: number } }
+        message:         { type: string }
+        showCta:         { type: boolean }
+        cta:
+          type: object
+          nullable: true
+          properties:
+            headline:     { type: string }
+            subheadline:  { type: string }
+            ctaLabel:     { type: string }
+            ctaUrl:       { type: string, format: uri }
+            urgencyLabel: { type: string }
+
+    PreventiveScoreResult:
+      type: object
+      properties:
+        scoreId:        { type: string, format: uuid }
+        compositeScore: { type: integer, minimum: 0, maximum: 100 }
+        scoreTier:      { type: string, enum: [OPTIMAL, GOOD, MODERATE_RISK, HIGH_RISK, CRITICAL] }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              score:   { type: integer }
+              weight:  { type: number }
+              signals: { type: array, items: { type: string } }
+        insufficientData: { type: array, items: { type: string } }
+        computedAt:     { type: string, format: date-time }
+
+# ─── Paths ────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Health ────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Platform health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Platform is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:    { type: string, enum: [ok, degraded] }
+                  version:   { type: string }
+                  timestamp: { type: string, format: date-time }
+                  checks:
+                    type: object
+                    properties:
+                      database: { type: string }
+                      redis:    { type: string }
+
+  # ── Funnel (public, no auth) ───────────────────────────────────────
+
+  /api/funnel/leads:
+    post:
+      tags: [Funnel]
+      summary: "Step 1: Create or identify a funnel lead"
+      operationId: createFunnelLead
+      description: Anonymous lead capture. Email is optional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:       { type: string, format: email }
+                phone:       { type: string, maxLength: 30 }
+                firstName:   { type: string, maxLength: 100 }
+                source:      { type: string, default: "landing_page" }
+                utmSource:   { type: string }
+                utmCampaign: { type: string }
+                utmMedium:   { type: string }
+            examples:
+              anonymous:
+                value: { source: "disglobal_app" }
+              identified:
+                value: { email: "hans@example.com", firstName: "Hans", source: "landing_page", utmCampaign: "longevidad-2025" }
+      responses:
+        "201":
+          description: Lead created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FunnelLeadResult' }
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+
+  /api/funnel/vitality-assessment:
+    post:
+      tags: [Funnel]
+      summary: "Step 2: Run biophysical age assessment"
+      operationId: funnelVitalityAssessment
+      description: |
+        Computes biological age using the Doctor Antivejez algorithm.
+        Results are NOT persisted as clinical records — funnel context only.
+        A `leadId` obtained from `/api/funnel/leads` is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leadId, age, sex, fatPercentage, bmi, digitalReflexes,
+                         visualAccommodation, staticBalance, skinHydration,
+                         systolicPressure, diastolicPressure]
+              properties:
+                leadId:              { type: string, format: uuid }
+                age:                 { type: integer, minimum: 18, maximum: 100 }
+                sex:                 { type: string, enum: [MALE, FEMALE, INTERSEX] }
+                isAthlete:           { type: boolean, default: false }
+                fatPercentage:       { type: number, minimum: 2, maximum: 70 }
+                bmi:                 { type: number, minimum: 10, maximum: 80 }
+                digitalReflexes:     { $ref: '#/components/schemas/DimensionalMeasurement' }
+                visualAccommodation: { type: number, minimum: 0, maximum: 20 }
+                staticBalance:       { $ref: '#/components/schemas/DimensionalMeasurement' }
+                skinHydration:       { type: number, minimum: 0, maximum: 100 }
+                systolicPressure:    { type: number, minimum: 60, maximum: 250 }
+                diastolicPressure:   { type: number, minimum: 40, maximum: 150 }
+            examples:
+              male_45:
+                value:
+                  leadId: "550e8400-e29b-41d4-a716-446655440000"
+                  age: 45
+                  sex: "MALE"
+                  isAthlete: false
+                  fatPercentage: 22.5
+                  bmi: 26.1
+                  digitalReflexes: { high: 0.8, long: 15.2, width: 8.1 }
+                  visualAccommodation: 3.5
+                  staticBalance: { high: 12.0, long: 30.5, width: 8.0 }
+                  skinHydration: 42.0
+                  systolicPressure: 128.0
+                  diastolicPressure: 82.0
+      responses:
+        "200":
+          description: Assessment result with optional referral CTA
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FunnelAssessmentResult' }
+        "404":
+          description: Lead not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProblemDetail' }
+
+  /api/funnel/facial-analysis:
+    post:
+      tags: [Funnel]
+      summary: "Step 3: Facial analysis (stub — Phase 3)"
+      operationId: funnelFacialAnalysis
+      description: Computer vision skin age analysis. Returns stub until Phase 3.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                leadId: { type: string, format: uuid }
+      responses:
+        "202":
+          description: Feature in development
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:  { type: string }
+                  message: { type: string }
+                  stub:    { type: object }
+
+  /api/funnel/booking:
+    post:
+      tags: [Funnel]
+      summary: "Step 4: Request appointment booking"
+      operationId: createFunnelBooking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leadId, bookingType]
+              properties:
+                leadId:        { type: string, format: uuid }
+                bookingType:   { type: string, enum: [ONLINE_CONSULT, IN_PERSON, LAB_PANEL] }
+                preferredDate: { type: string, format: date-time }
+                timezone:      { type: string, example: "America/Mexico_City" }
+                notes:         { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Booking request received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bookingId: { type: string, format: uuid }
+                  status:    { type: string }
+                  message:   { type: string }
+                  nextSteps: { type: array, items: { type: string } }
+
+  /api/exchange-rate:
+    get:
+      tags: [Funnel]
+      summary: Currency exchange rate for international pricing
+      operationId: getExchangeRate
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, default: "USD" }
+        - name: to
+          in: query
+          schema: { type: string, default: "MXN" }
+      responses:
+        "200":
+          description: Exchange rate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rate:      { type: number }
+                  from:      { type: string }
+                  to:        { type: string }
+                  updatedAt: { type: string, format: date-time }
+
+  # ── BioAge API (X-API-Key) ────────────────────────────────────────
+
+  /api/v2/vitality/assess:
+    post:
+      tags: [BioAge]
+      summary: Vytalix BioAge API — Biological age assessment
+      operationId: assessBiologicalAge
+      description: |
+        Full biophysical age assessment using the Doctor Antivejez algorithm.
+        Persists as immutable clinical record. Triggers async pipeline.
+        Supports idempotency via `X-Idempotency-Key` header.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Prevents duplicate assessments on retry
+        - name: X-Correlation-ID
+          in: header
+          required: false
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chronologicalAge, biologicalSex, measurements]
+              properties:
+                patientId:        { type: string, format: uuid }
+                subjectRef:       { type: string, maxLength: 64 }
+                chronologicalAge: { type: integer, minimum: 18, maximum: 120 }
+                biologicalSex:    { type: string, enum: [MALE, FEMALE, INTERSEX] }
+                isAthlete:        { type: boolean, default: false }
+                measurements:
+                  type: object
+                  required: [fatPercentage, bmi, digitalReflexes, visualAccommodation,
+                             staticBalance, skinHydration, systolicPressure, diastolicPressure]
+                  properties:
+                    fatPercentage:       { type: number }
+                    bmi:                 { type: number }
+                    digitalReflexes:     { $ref: '#/components/schemas/DimensionalMeasurement' }
+                    visualAccommodation: { type: number }
+                    staticBalance:       { $ref: '#/components/schemas/DimensionalMeasurement' }
+                    skinHydration:       { type: number }
+                    systolicPressure:    { type: number }
+                    diastolicPressure:   { type: number }
+      responses:
+        "200":
+          description: Biological age assessed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BiologicalAgeAssessmentResult' }
+        "401": { description: Invalid API key, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetail' } } } }
+        "403": { description: Insufficient scope, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetail' } } } }
+        "422": { description: Validation failed, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetail' } } } }
+        "429": { description: Rate limit exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetail' } } } }
+
+  /api/v2/vitality/{subjectRef}:
+    get:
+      tags: [BioAge]
+      summary: Get latest biological age assessment
+      operationId: getLatestBiologicalAge
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: subjectRef
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Latest assessment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BiologicalAgeAssessmentResult' }
+        "404": { description: No assessment found }
+
+  /api/v2/preventive/score:
+    post:
+      tags: [Preventive]
+      summary: Vytalix Preventive Score API — Composite health score 0-100
+      operationId: computePreventiveScore
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                patientId:  { type: string, format: uuid }
+                subjectRef: { type: string }
+      responses:
+        "200":
+          description: Composite preventive score
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreventiveScoreResult' }
+        "202":
+          description: Insufficient data — score not computed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:   { type: string }
+                  patientId: { type: string }
+
+  /api/v2/referral/{subjectRef}:
+    get:
+      tags: [Referral]
+      summary: Vytalix Smart Referral API — Evaluate referral CTA
+      operationId: evaluateReferral
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: subjectRef
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Referral evaluation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReferralCTA' }
+
+  /api/v2/engagement/events:
+    post:
+      tags: [Engagement]
+      summary: Vytalix Wellness Engagement API — Record behavioral events
+      operationId: recordEngagementEvents
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                subjectRef: { type: string }
+                patientId:  { type: string, format: uuid }
+                events:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [type]
+                    properties:
+                      type:       { type: string }
+                      payload:    { type: object }
+                      occurredAt: { type: string, format: date-time }
+                source: { type: string, default: "api" }
+      responses:
+        "202":
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:  { type: integer }
+                  patientId: { type: string }
+
+  /api/v2/insights/cohort:
+    get:
+      tags: [Insights]
+      summary: Vytalix Population Insights API — Anonymized cohort analytics
+      operationId: getCohortInsights
+      description: |
+        Returns aggregated, anonymized metrics for the tenant's patient cohort.
+        Minimum cohort size: 50 patients (privacy threshold).
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: ageGroup
+          in: query
+          schema: { type: string, example: "40-50" }
+        - name: biologicalSex
+          in: query
+          schema: { type: string, enum: [MALE, FEMALE, INTERSEX] }
+        - name: period
+          in: query
+          schema: { type: string, enum: [last_30d, last_90d, last_6m, last_12m, ytd], default: "last_90d" }
+      responses:
+        "200":
+          description: Cohort metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cohortSize:           { type: integer }
+                  avgBiologicalAge:     { type: number }
+                  avgChronologicalAge:  { type: number }
+                  avgDifferential:      { type: number }
+                  pctRejuvenecido:      { type: number }
+                  pctNormal:            { type: number }
+                  pctEnvejecido:        { type: number }
+                  topRiskSignals:       { type: array, items: { type: object } }
+                  engagementBreakdown:  { type: object }
+                  period:               { type: string }
+                  generatedAt:          { type: string, format: date-time }
+
+  # ── Admin ─────────────────────────────────────────────────────────
+
+  /admin/tenants/{tenantId}/api-keys:
+    post:
+      tags: [Admin]
+      summary: Provision API key for tenant
+      operationId: provisionApiKey
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, prefix, permissions, createdBy]
+              properties:
+                name:          { type: string }
+                prefix:        { type: string, pattern: "^[a-z0-9_]+$" }
+                permissions:   { type: object, additionalProperties: { type: array, items: { type: string } } }
+                rateLimitTier: { type: string, enum: [STANDARD, PROFESSIONAL, ENTERPRISE] }
+                expiresAt:     { type: string, format: date-time }
+                createdBy:     { type: string, format: uuid }
+      responses:
+        "201":
+          description: |
+            API key provisioned. The `keyPlain` field is shown ONCE — store it securely.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keyId:    { type: string, format: uuid }
+                  keyPlain: { type: string, description: "Shown ONCE. Cannot be retrieved again." }
+                  keyPrefix: { type: string }
+                  warning:   { type: string }
+
+  /admin/tenants/{tenantId}/usage:
+    get:
+      tags: [Admin]
+      summary: Monthly API usage summary
+      operationId: getTenantUsage
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: month
+          in: query
+          schema: { type: string, example: "2025-06" }
+      responses:
+        "200":
+          description: Usage and estimated invoice
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenantId:          { type: string }
+                  period:            { type: string }
+                  usageByOperation:  { type: object }
+                  totalCalls:        { type: integer }
+                  estimatedInvoice:
+                    type: object
+                    properties:
+                      amountCents: { type: integer }
+                      amountUsd:   { type: string }
+                      currency:    { type: string }

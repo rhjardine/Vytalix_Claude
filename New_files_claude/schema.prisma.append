@@ -1,0 +1,181 @@
+// =============================================================================
+// AGREGAR al final de prisma/schema.prisma — después de los modelos existentes
+// NO modificar ningún modelo existente. Solo append.
+//
+// Modelos nuevos: FunnelLead, VitalityAssessment, FacialAnalysis, Booking
+// Todos siguen el patrón RLS del esquema existente (tenantId en cada tabla)
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// MIGRATION: Después de agregar estos modelos, ejecutar:
+//   npx prisma migrate dev --name add_funnel_tables
+//   npx prisma generate
+// ---------------------------------------------------------------------------
+
+/// Lead capturado desde el funnel público de la landing.
+/// Punto de entrada al sistema: cuando el lead se convierte,
+/// se crea un User clínico y se importa el historial del funnel
+/// como primeras observaciones en Vytalix CIL.
+model FunnelLead {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  // Datos del prospecto
+  name         String  @db.VarChar(200)
+  email        String  @db.VarChar(255)
+  organization String? @db.VarChar(255)
+  phone        String? @db.VarChar(50)
+  country      String? @db.VarChar(2) // ISO 3166-1 alpha-2
+
+  // Contexto de interés
+  interestType String  @db.VarChar(50) // FunnelInterestType
+  message      String? @db.Text
+  source       String  @db.VarChar(50) // FunnelLeadSource
+
+  // Atribución
+  utmSource    String? @db.VarChar(100)
+  utmCampaign  String? @db.VarChar(100)
+  referralCode String? @db.VarChar(50)
+
+  // Assessment vinculado (si completó el test antes de llenar el form)
+  vitalityAssessmentId String? @db.Uuid
+  facialAnalysisId     String? @db.Uuid
+
+  // Consentimiento LOPD/GDPR
+  consentMarketing      Boolean @default(false)
+  consentDataProcessing Boolean @default(false)
+
+  // Estado del lead en el pipeline
+  status    String   @default("NEW") @db.VarChar(20)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relaciones
+  assessments VitalityAssessment[]
+  bookings    Booking[]
+
+  @@index([tenantId])
+  @@index([tenantId, email])
+  @@index([tenantId, status])
+  @@index([tenantId, source])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("funnel_leads")
+}
+
+/// Resultado del test de vitalidad celular de 45 preguntas.
+/// Fuente primaria para el journey del paciente en el funnel.
+/// Cuando el lead se convierte, este assessment se importa como
+/// primera observación clínica en el pipeline del CIL.
+model VitalityAssessment {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  // Resultado global
+  score                  Int    // 0-100
+  category               String @db.VarChar(20) // EXCELENTE|BUENO|REGULAR|CRITICO
+  yearsBiological        Int
+  chronologicalAgeGroup  String @db.VarChar(10) // '45'|'59'|'69'|'78'
+
+  // Dimensiones por grupo (score 0-100 por categoría)
+  dimEnergiaEstadoMental  Int // Grupo 1 — 11 preguntas
+  dimSuenoCognicion       Int // Grupo 2 — 6 preguntas
+  dimComposicionCorporal  Int // Grupo 3 — 13 preguntas
+  dimSignosEnvejecimiento Int // Grupo 4 — 12 preguntas
+  dimRangoEdad            Int // Grupo 5 — 3 preguntas
+
+  // Respuestas raw para auditoría y futuro reentrenamiento del modelo
+  answersPayload Json @db.JsonB // Record<string, boolean>
+
+  // Contexto de captura
+  completedAt     DateTime @db.Timestamptz
+  durationSeconds Int?
+  deviceType      String?  @db.VarChar(20) // mobile|desktop|tablet
+  sessionId       String?  @db.VarChar(100)
+
+  // Vinculación con lead
+  leadId String?    @db.Uuid
+  lead   FunnelLead? @relation(fields: [leadId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, leadId])
+  @@index([tenantId, category])
+  @@index([tenantId, completedAt(sort: Desc)])
+  @@map("vitality_assessments")
+}
+
+/// Resultado del análisis facial del AgeBot.
+/// PRIVACIDAD: la imagen base64 NUNCA se almacena.
+/// Solo se persiste el hash SHA-256 para auditoría.
+model FacialAnalysis {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  // Resultado del análisis
+  estimatedAge   Int
+  confidence     Decimal @db.Decimal(4, 3) // 0.000 – 1.000
+  analysisPoints Int
+
+  // Estado y proveedor
+  status        String  @db.VarChar(20) // PENDING|COMPLETED|FAILED
+  provider      String  @db.VarChar(30) // MOCK|OPENAI_VISION|AZURE_FACE|AWS_REKOGNITION
+  providerModel String? @db.VarChar(50)
+  errorCode     String? @db.VarChar(30)
+
+  // Hash de la imagen (NO la imagen)
+  imageHash String? @db.VarChar(64) // SHA-256 hex
+
+  // Metadatos
+  analyzedAt DateTime @db.Timestamptz
+  leadId     String?  @db.Uuid
+
+  @@index([tenantId])
+  @@index([tenantId, leadId])
+  @@index([tenantId, analyzedAt(sort: Desc)])
+  @@map("facial_analyses")
+}
+
+/// Solicitud de consulta exploratoria.
+/// Canal primario para Venezuela: WhatsApp (WHATSAPP_ONLY).
+/// Canal digital (CONFIRMED) como aspiración futura.
+model Booking {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  // Datos del paciente
+  name  String  @db.VarChar(200)
+  email String  @db.VarChar(255)
+  phone String? @db.VarChar(50)
+
+  // Tipo de consulta
+  consultationType     String  @db.VarChar(50) // ConsultationType
+  specialistPreference String? @db.VarChar(30)
+
+  // Preferencias de horario
+  preferredDate String? @db.VarChar(10) // YYYY-MM-DD
+  preferredTime String? @db.VarChar(20) // morning|afternoon|evening
+  timezone      String? @db.VarChar(50) @default("America/Caracas")
+
+  // Contexto clínico previo (si completó el test)
+  vitalityScore    Int?
+  vitalityCategory String? @db.VarChar(20)
+  chiefConcern     String? @db.Text
+
+  // Estado del booking
+  status              String    @default("PENDING_CONFIRM") @db.VarChar(30)
+  confirmationCode    String?   @db.VarChar(10)
+  confirmationChannel String?   @db.VarChar(20) // WHATSAPP|EMAIL|SMS|NONE
+  scheduledAt         DateTime? @db.Timestamptz
+
+  // Vinculación con lead
+  leadId String?    @db.Uuid
+  lead   FunnelLead? @relation(fields: [leadId], references: [id])
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, leadId])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("bookings")
+}

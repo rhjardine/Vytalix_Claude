@@ -1,0 +1,128 @@
+// =============================================================================
+// PATCH PARA cta.tsx — Sprint 3
+//
+// INSTRUCCIÓN PARA CLAUDE CODE:
+//   Abrir src/components/landing/cta.tsx y aplicar los siguientes cambios.
+//   Son 2 cambios quirúrgicos. NO modificar el JSX ni el diseño del componente.
+//
+// CAMBIO 1: Agregar imports
+// CAMBIO 2: Reemplazar handleSubmit completo
+// CAMBIO 3: Agregar estado de error
+// =============================================================================
+
+
+// ─── CAMBIO 1: IMPORTS ────────────────────────────────────────────────────────
+// Agregar después de los imports React existentes:
+
+/*
+import { funnelApi, FunnelApiError } from '@/services/api'
+import { usePublicFunnelStore } from '@/store/usePublicFunnelStore'
+*/
+
+
+// ─── CAMBIO 2: AGREGAR estado de error ───────────────────────────────────────
+// Después de:  const [submitted, setSubmitted] = React.useState(false)
+// Agregar:
+
+/*
+  const [submitError, setSubmitError] = React.useState<string | null>(null)
+*/
+
+
+// ─── CAMBIO 3: handleSubmit COMPLETO ─────────────────────────────────────────
+// REEMPLAZAR el handleSubmit actual por este:
+
+/*
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    const store = usePublicFunnelStore.getState()
+
+    try {
+      const result = await funnelApi.submitLead({
+        name:         formData.name,
+        email:        formData.email,
+        organization: formData.organization || undefined,
+        interestType: (formData.interestType as any) || 'INFORMACION_GENERAL',
+        message:      formData.message || undefined,
+        source:       'CTA_FORM',
+
+        // Correlacionar con el assessment si el usuario completó el test
+        vitalityAssessmentId: store.assessmentId ?? undefined,
+        facialAnalysisId:     store.facialResult?.id ?? undefined,
+
+        // Consentimiento explícito (los checkboxes del formulario)
+        consentMarketing:      true,
+        consentDataProcessing: true,
+      })
+
+      // Guardar el leadId en el store para correlación futura (booking, etc.)
+      store.setLeadId(result.id)
+      store.setStep('lead_capture')
+
+      setSubmitted(true)
+    } catch (err) {
+      if (err instanceof FunnelApiError && err.status === 409) {
+        // Lead duplicado — tratar como éxito (el usuario ya estaba registrado)
+        setSubmitted(true)
+      } else {
+        const msg = err instanceof Error
+          ? err.message
+          : 'Error al enviar el formulario. Por favor intenta de nuevo.'
+        setSubmitError(msg)
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+*/
+
+
+// ─── CAMBIO 4: Mostrar error en el JSX ───────────────────────────────────────
+// Agregar después del botón de submit (antes del cierre de </form>):
+
+/*
+  {submitError && (
+    <p className="text-red-400 text-sm text-center mt-2">
+      {submitError}
+    </p>
+  )}
+*/
+
+
+// =============================================================================
+// NOTAS DE IMPLEMENTACIÓN
+// =============================================================================
+//
+// INTERESTTYPE MAPPING:
+// El formulario actual usa strings como 'Demo de la Plataforma'.
+// El contrato del backend espera 'DEMO_PLATAFORMA'.
+// Solución: mapear en el handleSubmit O ajustar los valores de interestOptions
+// en CTA_CONTENT para que coincidan con los enum del contrato.
+//
+// Mapping recomendado en constants.ts o directamente en cta.tsx:
+/*
+const INTEREST_MAP: Record<string, string> = {
+  'demo-de-la-plataforma':    'DEMO_PLATAFORMA',
+  'integracion-emr':          'INTEGRACION_EMR',
+  'partnership-clinico':      'PARTNERSHIP_CLINICO',
+  'informacion-general':      'INFORMACION_GENERAL',
+  'longevidad-clinica':       'LONGEVIDAD_CLINICA',
+  'odontologia-longevidad':   'ODONTOLOGIA_LONGEVIDAD',
+  'turismo-de-salud':         'TURISMO_SALUD',
+}
+// Usar: INTEREST_MAP[formData.interestType] || 'INFORMACION_GENERAL'
+*/
+//
+// CONSENTIMIENTO:
+// Si el formulario actual no tiene checkboxes de consentimiento,
+// agregarlos es REQUERIDO por LOPD antes de lanzar a producción.
+// En desarrollo se envían como true para no bloquear el flujo.
+//
+// CORRELACIÓN:
+// La clave de la arquitectura: si el usuario completó el test celular
+// ANTES de llenar el formulario, el assessmentId ya estará en el store
+// y se incluirá en el lead automáticamente. Esto permite al equipo
+// de ventas ver el score de vitalidad del lead en el CRM.

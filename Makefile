@@ -1,149 +1,115 @@
 # =============================================================================
-# Vytalix Clinical Intelligence Engine — Makefile
-# make setup   → complete first-time installation (< 10 minutes)
-# make demo    → validate + start full stack
-# make check   → pre-demo Go/No-Go validation
-# make reset   → restore demo data (idempotent)
+# Vytalix Platform — Makefile
 # =============================================================================
 
-.PHONY: setup demo check reset dev stop logs clean help
-.DEFAULT_GOAL := help
+.PHONY: setup dev demo check reset stop logs test typecheck lint build
 
-G  = \033[0;32m
-Y  = \033[0;33m
-R  = \033[0;31m
-B  = \033[1m
-X  = \033[0m
+# ── Setup (first run) ─────────────────────────────────────────────
+setup:
+	@echo "🔧 Setting up Vytalix Platform..."
+	cp -n .env.example .env || true
+	npm install
+	docker compose up -d postgres redis
+	@echo "⏳ Waiting for database..."
+	@sleep 5
+	npx prisma migrate deploy
+	psql $$DATABASE_URL -f prisma/migration_rls.sql
+	@echo "✅ Setup complete. Run 'make dev' to start."
 
-COMPOSE      = docker compose
-COMPOSE_FULL = $(COMPOSE) --profile full
-DB_EXEC      = $(COMPOSE) --profile dev exec -T postgres \
-               psql -U $${POSTGRES_USER:-vytalix} -d $${POSTGRES_DB:-vytalix_dev}
-
-# ── setup ─────────────────────────────────────────────────────────
-setup: .env
-	@echo "\n$(B)  Vytalix Setup$(X)\n"
-
-	@echo "  Checking prerequisites..."
-	@which docker >/dev/null 2>&1 || (echo "$(R)  ✗ Docker not found$(X)" && exit 1)
-	@which node   >/dev/null 2>&1 || (echo "$(R)  ✗ Node.js not found$(X)" && exit 1)
-	@echo "  $(G)✓$(X) Prerequisites OK (Docker + Node.js)"
-
-	@echo "  Installing npm dependencies..."
-	@npm install --silent
-	@echo "  $(G)✓$(X) Dependencies installed"
-
-	@echo "  Generating Prisma client (requires internet)..."
-	@if PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 npm run db:generate 2>/dev/null; then \
-		echo "  $(G)✓$(X) Prisma client generated"; \
-	else \
-		echo "  $(Y)~$(X) Prisma generate failed (offline mode — using pg fallback)"; \
-		echo "  $(Y)~$(X) Run 'npm run db:generate' when internet is available"; \
-	fi
-
-	@echo "  Starting database..."
-	@$(COMPOSE) --profile dev up -d postgres redis
-	@echo "  Waiting for PostgreSQL..."
-	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		$(COMPOSE) --profile dev exec -T postgres pg_isready -U $${POSTGRES_USER:-vytalix} >/dev/null 2>&1 && break; \
-		sleep 3; \
-	done
-	@$(COMPOSE) --profile dev exec -T postgres pg_isready -U $${POSTGRES_USER:-vytalix} >/dev/null 2>&1 \
-		|| (echo "$(R)  ✗ PostgreSQL not ready after 30s$(X)" && exit 1)
-	@echo "  $(G)✓$(X) PostgreSQL ready"
-
-	@echo "  Running migrations..."
-	@npm run db:migrate 2>&1 | grep -E "Applied|already|error" | head -5 || true
-	@echo "  $(G)✓$(X) Migrations applied"
-
-	@echo "  Applying RLS policies..."
-	@$(DB_EXEC) -f /dev/stdin < prisma/migration_rls.sql >/dev/null 2>&1 \
-		|| echo "  $(Y)~$(X) RLS policies: applied or already exist"
-	@echo "  $(G)✓$(X) RLS active"
-
-	@echo "  Seeding demo data..."
-	@npm run db:seed 2>&1 | tail -3
-	@echo "  $(G)✓$(X) Demo data loaded"
-
-	@echo "  Bootstrapping auth credentials..."
-	@npm run auth:bootstrap 2>&1 | tail -4
-	@echo "  $(G)✓$(X) Credentials ready"
-
-	@echo "\n  $(G)$(B)Setup complete.$(X) Run $(B)make demo$(X) to start.\n"
-
-# ── demo ──────────────────────────────────────────────────────────
-demo: .env
-	@echo "\n$(B)  Starting Vytalix Demo$(X)\n"
-
-	@echo "  Running pre-demo validation..."
-	@npm run demo:check || (echo "\n  $(R)✗ Validation failed. Run: make reset$(X)\n" && exit 1)
-
-	@echo "  Starting all services..."
-	@$(COMPOSE_FULL) up -d
-	@sleep 4
-
-	@echo "  Verifying API..."
-	@curl -sf http://localhost:$${API_PORT:-3001}/health >/dev/null \
-		|| (echo "  $(R)✗ API not responding$(X)" && exit 1)
-	@echo "  $(G)✓$(X) API healthy"
-
-	@echo ""
-	@echo "  $(B)Ready for demo$(X)"
-	@echo "  Dashboard:   http://localhost:$${FRONTEND_PORT:-3000}/dashboard"
-	@echo "  API:         http://localhost:$${API_PORT:-3001}/health"
-	@echo "  Demo status: http://localhost:$${API_PORT:-3001}/demo/status"
-	@echo ""
-
-# ── check ─────────────────────────────────────────────────────────
-check:
-	@npm run demo:check
-
-# ── reset ─────────────────────────────────────────────────────────
-reset:
-	@echo "\n$(B)  Resetting demo data$(X)\n"
-	@npm run db:seed 2>&1 | tail -3
-	@npm run auth:bootstrap 2>&1 | tail -3
-	@npm run demo:check
-
-# ── dev ───────────────────────────────────────────────────────────
+# ── Development servers ───────────────────────────────────────────
 dev:
-	@$(COMPOSE) --profile dev up -d postgres redis
-	@npm run api:dev
+	docker compose up -d postgres redis
+	npx concurrently \
+	  "npm run api:dev" \
+	  "npm run dev"
 
-# ── stop ──────────────────────────────────────────────────────────
+# ── Demo (with seeded data) ───────────────────────────────────────
+demo:
+	@$(MAKE) check
+	docker compose --profile demo up -d
+	@echo ""
+	@echo "🚀 Vytalix Platform running:"
+	@echo "   Dashboard:  http://localhost:3000/dashboard"
+	@echo "   Funnel:     http://localhost:3000/funnel"
+	@echo "   API Health: http://localhost:3001/health"
+	@echo "   API Docs:   http://localhost:3001/docs"
+
+# ── Pre-flight check ──────────────────────────────────────────────
+check:
+	@echo "🔍 Running pre-flight checks..."
+	@node -e "require('dotenv').config(); const u=process.env.DATABASE_URL; if(!u) throw new Error('DATABASE_URL missing')"
+	@node -e "require('dotenv').config(); const r=process.env.REDIS_URL; if(!r) throw new Error('REDIS_URL missing')"
+	@curl -sf http://localhost:3001/health | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); const j=JSON.parse(d); if(j.status!=='ok') throw new Error('API not healthy: '+j.status)" 2>/dev/null || echo "⚠️  API not running yet (start with 'make dev')"
+	@echo "✅ Checks passed"
+
+# ── Tests ─────────────────────────────────────────────────────────
+test:
+	npx vitest run
+
+test-watch:
+	npx vitest
+
+test-coverage:
+	npx vitest run --coverage
+
+test-integration:
+	npx vitest run tests/integration/
+
+# ── Type checking ─────────────────────────────────────────────────
+typecheck:
+	npx tsc --noEmit --project tsconfig.server.json
+
+# ── Lint ──────────────────────────────────────────────────────────
+lint:
+	npx eslint src --ext .ts --max-warnings 0
+
+# ── Build ────────────────────────────────────────────────────────
+build:
+	npm run api:build
+	npm run build
+
+# ── Reset demo data ───────────────────────────────────────────────
+reset:
+	@echo "♻️  Resetting demo data..."
+	psql $$DATABASE_URL -c "TRUNCATE funnel_leads, funnel_assessments, funnel_bookings, biological_age_assessments, engagement_events, referral_events, billing_events RESTART IDENTITY CASCADE;"
+	psql $$DATABASE_URL -c "SET app.seed_demo = 'true';" -f prisma/migration_rls.sql
+	@echo "✅ Demo data reset"
+
+# ── Stop all services ────────────────────────────────────────────
 stop:
-	@$(COMPOSE_FULL) down
-	@echo "  $(G)✓$(X) All services stopped"
+	docker compose down
 
-# ── logs ──────────────────────────────────────────────────────────
+# ── Logs ─────────────────────────────────────────────────────────
 logs:
-	@$(COMPOSE_FULL) logs -f api
+	docker compose logs -f api
 
-# ── clean ─────────────────────────────────────────────────────────
-clean:
-	@echo "$(R)  WARNING: deletes all data$(X)"
-	@read -p "  Continue? [y/N] " c && [ "$$c" = "y" ] || exit 1
-	@$(COMPOSE_FULL) down -v
-	@echo "  $(G)✓$(X) Clean complete"
+logs-all:
+	docker compose logs -f
 
-# ── .env bootstrap ────────────────────────────────────────────────
-.env:
-	@if [ ! -f .env ]; then \
-		cp .env.example .env; \
-		echo "  $(Y)~$(X) Created .env from .env.example"; \
-	fi
+# ── DB utilities ─────────────────────────────────────────────────
+db-studio:
+	npx prisma studio
 
-# ── help ──────────────────────────────────────────────────────────
-help:
-	@echo ""
-	@echo "$(B)  Vytalix — Commands$(X)"
-	@echo ""
-	@echo "  $(B)make setup$(X)    First-time installation"
-	@echo "  $(B)make demo$(X)     Validate + start demo stack"
-	@echo "  $(B)make check$(X)    Pre-demo Go/No-Go validation"
-	@echo "  $(B)make reset$(X)    Restore demo data"
-	@echo "  $(B)make dev$(X)      Development mode"
-	@echo "  $(B)make stop$(X)     Stop all services"
-	@echo "  $(B)make logs$(X)     Follow API logs"
-	@echo "  $(B)make clean$(X)    Remove all data (destructive)"
-	@echo ""
+db-migrate:
+	npx prisma migrate dev
+
+db-rls:
+	psql $$DATABASE_URL -f prisma/migration_rls.sql
+
+# ── API Key provisioning ──────────────────────────────────────────
+provision-disglobal-key:
+	@echo "🔑 Provisioning Disglobal API key..."
+	curl -sf -X POST http://localhost:3001/admin/tenants/00000000-0000-0000-0000-000000000002/api-keys \
+	  -H "Content-Type: application/json" \
+	  -d '{"name":"Disglobal Production","prefix":"dis","permissions":{"vitality":["read","write"],"preventive":["write"],"referral":["read"],"engagement":["write"],"insights":["read"]},"rateLimitTier":"PROFESSIONAL","createdBy":"00000000-0000-0000-0000-000000000001"}' \
+	  | python3 -m json.tool
+	@echo "⚠️  Save the keyPlain value — it cannot be retrieved again."
+
+# ── Release candidate validation ─────────────────────────────────
+rc-validate:
+	@echo "🔍 Release Candidate Validation..."
+	@$(MAKE) typecheck   && echo "  ✅ TypeCheck" || echo "  ❌ TypeCheck FAILED"
+	@$(MAKE) lint        && echo "  ✅ Lint"      || echo "  ❌ Lint FAILED"
+	@$(MAKE) test        && echo "  ✅ Tests"     || echo "  ❌ Tests FAILED"
+	@$(MAKE) check       && echo "  ✅ Health"    || echo "  ❌ Health FAILED"
+	@echo "Done."

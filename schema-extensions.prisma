@@ -1,0 +1,440 @@
+// =============================================================================
+// schema-extensions.prisma
+// ADD THESE MODELS to the existing prisma/schema.prisma
+// RULE: Additive only — no field removed, no existing relation touched.
+// Run: npx prisma migrate dev --name "add_vytalix_platform_v2"
+// =============================================================================
+
+// =============================================================================
+// DOMAIN 8 — BIOLOGICAL AGE ASSESSMENTS
+// All assessment types from Doctor Antivejez: biophysical, biochemical,
+// orthomolecular, genetic. One immutable record per evaluation session.
+// =============================================================================
+
+/// A complete biological age assessment. Immutable after creation.
+/// assessmentType determines which partialAgesSnapshot fields are populated.
+/// The inputSnapshot + algorithmVersion enable full reproducibility audit.
+model BiologicalAgeAssessment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @db.Uuid
+  patientId String   @db.Uuid
+
+  assessmentType AssessmentType
+
+  // Core results
+  chronologicalAge  Int              // Age in years at time of assessment
+  biologicalAge     Decimal          @db.Decimal(5, 1)
+  differentialAge   Decimal          @db.Decimal(5, 1) // biologicalAge - chronologicalAge
+
+  // Derived status — computed at insert, never recomputed
+  ageStatus         AgeStatus
+
+  // Partial ages per measurement domain (varies by assessmentType)
+  // BIOPHYSICS: fatAge, bmiAge, reflexesAge, visualAge, balanceAge,
+  //             hydrationAge, systolicAge, diastolicAge
+  // BIOCHEMISTRY: cholesterolAge, glucoseAge, creatinineAge, ...
+  // ORTHOMOLECULAR: vitaminDAge, omega3Age, antioxidantAge, ...
+  // GENETIC: telomereAge, methylationAge, ...
+  partialAgesSnapshot Json @db.JsonB
+
+  // Exact inputs used — enables external audit of the calculation
+  inputSnapshot Json @db.JsonB
+
+  // Algorithm provenance — links to calculation_versions table
+  algorithmId      String @db.VarChar(50)  // e.g. "daaa-biophysics"
+  algorithmVersion String @db.VarChar(20)  // e.g. "2.1.0"
+
+  // Clinical context
+  conductedBy String?   @db.Uuid   // User id (physician/coordinator). Null for API-only.
+  notes       String?   @db.Text
+
+  assessedAt DateTime @default(now()) @db.Timestamptz
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, assessmentType, assessedAt(sort: Desc)])
+  @@index([tenantId, assessedAt(sort: Desc)])
+  @@index([tenantId, ageStatus]) // For cohort queries: "all rejuvenated patients"
+  @@map("biological_age_assessments")
+}
+
+/// Composite preventive health score. Aggregates multiple risk domains.
+/// Computed asynchronously after observations or assessments are added.
+model PreventiveScore {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  // Composite score 0–100 (higher = healthier)
+  compositeScore Int
+  scoreTier      ScoreTier
+
+  // Sub-scores per domain (0–100 each, null if insufficient data)
+  cardiovascularScore Int?
+  metabolicScore      Int?
+  biologicalAgeScore  Int?
+  lifestyleScore      Int?
+
+  // Contributing inputs snapshot — for reproducibility
+  inputSnapshot Json @db.JsonB
+
+  algorithmId      String @db.VarChar(50)
+  algorithmVersion String @db.VarChar(20)
+
+  computedAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, computedAt(sort: Desc)])
+  @@index([tenantId, scoreTier]) // Cohort queries
+  @@map("preventive_scores")
+}
+
+// =============================================================================
+// DOMAIN 9 — ENGAGEMENT
+// High-frequency event stream. TimescaleDB hypertable on occurred_at.
+// Tracks every meaningful health interaction for engagement scoring.
+// =============================================================================
+
+/// Individual engagement event. Append-only, high-volume.
+/// TimescaleDB hypertable: SELECT create_hypertable('engagement_events', 'occurred_at');
+model EngagementEvent {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  // Who triggered the event (null for system-generated)
+  actorId   String? @db.Uuid
+
+  eventType  EngagementEventType
+  // Flexible payload — structure documented per eventType
+  // TEST_COMPLETED: { testType, biologicalAge, differentialAge }
+  // RECOMMENDATION_VIEWED: { recommendationId, urgency }
+  // GOAL_SET: { goalType, targetValue, targetDate }
+  // REPORT_DOWNLOADED: { reportType }
+  payload   Json @db.JsonB
+
+  source    String @db.VarChar(50) // "disglobal_app", "doctor_antivejez_web", "api"
+
+  occurredAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, occurredAt(sort: Desc)])
+  @@index([tenantId, eventType, occurredAt(sort: Desc)])
+  @@map("engagement_events")
+}
+
+/// Materialized engagement score per patient. Updated by background job.
+/// Separate from events to avoid recomputing from raw stream on every read.
+model EngagementScore {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @unique @db.Uuid // One active score per patient
+
+  score         Int       // 0–100
+  tier          EngagementTier
+  streak        Int       @default(0) // Consecutive days with engagement
+  lastEventAt   DateTime? @db.Timestamptz
+  totalEvents   Int       @default(0)
+
+  // Breakdowns
+  testCompletionRate Decimal? @db.Decimal(4, 1) // % of suggested tests completed
+  recommendationAck  Decimal? @db.Decimal(4, 1) // % of recs viewed/acknowledged
+
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, tier])
+  @@index([tenantId, score(sort: Desc)])
+  @@map("engagement_scores")
+}
+
+// =============================================================================
+// DOMAIN 10 — REFERRAL ENGINE
+// Tracks referral triggers, CTA delivery, and conversion tracking.
+// Revenue share computation based on converted referrals.
+// =============================================================================
+
+/// A referral recommendation generated for a patient.
+/// Conversion tracked via convertedAt + convertedValue.
+model ReferralEvent {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  referralType  ReferralType
+  urgency       Urgency
+
+  // Why this referral was triggered
+  triggerReason  String @db.VarChar(255) // e.g. "differential_age_exceeds_5"
+  triggerPayload Json   @db.JsonB        // The data that triggered it
+
+  // CTA payload sent to the consumer
+  ctaPayload Json @db.JsonB
+  // {
+  //   headline: string,
+  //   subheadline: string,
+  //   ctaLabel: string,
+  //   ctaUrl: string,        // Trackable URL with referral token
+  //   urgencyLabel: string,
+  //   valueProposition: string
+  // }
+
+  // Tracking
+  ctaDeliveredAt DateTime? @db.Timestamptz
+  ctaClickedAt   DateTime? @db.Timestamptz
+  convertedAt    DateTime? @db.Timestamptz
+  convertedValue Decimal?  @db.Decimal(10, 2) // Revenue at conversion (for rev share)
+
+  status ReferralStatus @default(GENERATED)
+
+  generatedAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, generatedAt(sort: Desc)])
+  @@index([tenantId, status])
+  @@index([tenantId, referralType, status]) // Rev share aggregation
+  @@map("referral_events")
+}
+
+// =============================================================================
+// DOMAIN 11 — API KEYS (External integrations: Disglobal, EMR, etc.)
+// Key value is NEVER stored — only the SHA-256 hash.
+// =============================================================================
+
+/// API key for external system access. Key itself stored hashed only.
+model ApiKey {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  // Human-readable name for the integration
+  name        String @db.VarChar(255) // e.g. "Disglobal Marketplace Integration"
+  description String? @db.Text
+
+  // Stored as SHA-256 hash. Lookup: WHERE keyHash = sha256($inputKey)
+  keyHash String @unique @db.VarChar(64)
+
+  // Short prefix for display/identification (first 8 chars: "vyx_dis_")
+  keyPrefix String @db.VarChar(20)
+
+  // Permissions granted to this key
+  // Example: { "vitality": ["read", "write"], "insights": ["read"] }
+  permissions Json @db.JsonB
+
+  // Rate limiting tier
+  rateLimitTier RateLimitTier @default(STANDARD)
+
+  // Usage tracking
+  lastUsedAt    DateTime? @db.Timestamptz
+  requestCount  BigInt    @default(0)
+
+  // Lifecycle
+  isActive  Boolean   @default(true)
+  expiresAt DateTime? @db.Timestamptz  // Null = no expiry
+  createdBy String    @db.Uuid         // User id who created this key
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  revokedAt DateTime? @db.Timestamptz
+  revokedBy String?   @db.Uuid
+
+  @@index([tenantId, isActive])
+  @@map("api_keys")
+}
+
+// =============================================================================
+// DOMAIN 12 — CONSENT RECORDS
+// Required for HIPAA/GDPR compliance. Immutable consent grants.
+// Withdrawal creates new record with withdrawnAt set, not update.
+// =============================================================================
+
+/// Consent record for data processing. Append-only — never updated.
+/// Withdrawal = new record with withdrawnAt != null.
+model ConsentRecord {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @db.Uuid
+  patientId String @db.Uuid
+
+  consentType ConsentType
+  legalBasis  String      @db.VarChar(100) // "HIPAA_authorization", "GDPR_Art6_1b", etc.
+
+  // Version of the privacy policy/terms consented to
+  documentVersion String @db.VarChar(20)
+  documentUrl     String @db.VarChar(500)
+
+  // Consent method
+  consentMethod String @db.VarChar(50) // "explicit_checkbox", "electronic_signature", "verbal_witnessed"
+
+  // Lifecycle
+  consentedAt  DateTime  @default(now()) @db.Timestamptz
+  expiresAt    DateTime? @db.Timestamptz
+  withdrawnAt  DateTime? @db.Timestamptz
+  withdrawnBy  String?   @db.Uuid
+
+  // Audit trail
+  ipAddress    String? @db.VarChar(45)
+  userAgent    String? @db.VarChar(500)
+
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, patientId, consentType])
+  @@index([tenantId, consentedAt(sort: Desc)])
+  @@map("consent_records")
+}
+
+// =============================================================================
+// DOMAIN 13 — CALCULATION VERSIONS
+// Algorithm registry. Guarantees historical assessments are reproducible.
+// =============================================================================
+
+/// Registry of algorithm versions. One row per version per algorithm.
+/// Once activated, a version is never deleted — only deprecated.
+model CalculationVersion {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  algorithmId String @db.VarChar(50)  // e.g. "daaa-biophysics", "framingham-2008"
+  version     String @db.VarChar(20)  // semver: "2.1.0"
+  description String @db.Text
+
+  // Serialized algorithm parameters for this version
+  // For biophysics: { scoringCoefficients, itemWeights, rangeTable }
+  // For Framingham: { coefficients, baselineSurvival, meanCoefficients }
+  paramsSnapshot Json @db.JsonB
+
+  isActive   Boolean   @default(false) // Only one version per algorithmId should be active
+  activatedAt DateTime? @db.Timestamptz
+  deprecatedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@unique([algorithmId, version])
+  @@index([algorithmId, isActive])
+  @@map("calculation_versions")
+}
+
+// =============================================================================
+// DOMAIN 14 — BAREMOS (Scoring tables for Doctor Antivejez algorithms)
+// Lookup tables for biophysical age computation. Tenant-overrideable.
+// =============================================================================
+
+/// A scoring board (baremo) for a specific biophysical measurement.
+/// Rows define age/sex-specific reference ranges for interpolation.
+model BiophysicsBoard {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @db.Uuid
+
+  measurementKey String @db.VarChar(50) // "fatPercentage", "bmi", "digitalReflexes", etc.
+  biologicalSex  BiologicalSex
+  isAthlete      Boolean @default(false)
+
+  // Ordered ranges for interpolation
+  // Each entry: { minAge, maxAge, minValue, maxValue, score }
+  ranges Json @db.JsonB
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@unique([tenantId, measurementKey, biologicalSex, isAthlete])
+  @@index([tenantId, measurementKey])
+  @@map("biophysics_boards")
+}
+
+// =============================================================================
+// NEW ENUMS (extend the existing enum section)
+// =============================================================================
+
+enum AssessmentType {
+  BIOPHYSICS     // Doctor Antivejez 8-measurement biophysical battery
+  BIOCHEMISTRY   // Blood panel markers → biochemical age
+  ORTHOMOLECULAR // Micronutrient + oxidative stress markers
+  GENETIC        // Telomere length, methylation clock (3rd party)
+}
+
+enum AgeStatus {
+  REJUVENECIDO  // biologicalAge < chronologicalAge - 2
+  NORMAL        // Within ±2 years of chronological
+  ENVEJECIDO    // biologicalAge > chronologicalAge + 2
+}
+
+enum ScoreTier {
+  OPTIMAL       // 80–100
+  GOOD          // 60–79
+  MODERATE_RISK // 40–59
+  HIGH_RISK     // 20–39
+  CRITICAL      // 0–19
+}
+
+enum EngagementEventType {
+  TEST_COMPLETED
+  TEST_STARTED
+  RECOMMENDATION_VIEWED
+  RECOMMENDATION_ACKNOWLEDGED
+  GOAL_SET
+  GOAL_ACHIEVED
+  REPORT_DOWNLOADED
+  REFERRAL_CTA_VIEWED
+  REFERRAL_CTA_CLICKED
+  SESSION_STARTED
+  EDUCATION_CONTENT_VIEWED
+}
+
+enum EngagementTier {
+  CHAMPION    // Score >= 80, highly engaged
+  ENGAGED     // Score 60–79
+  PASSIVE     // Score 40–59
+  AT_RISK     // Score 20–39 (engagement dropping)
+  DORMANT     // Score < 20 or no activity > 30 days
+}
+
+enum ReferralType {
+  PREMIUM_CONSULT       // Full Doctor Antivejez consultation
+  SPECIALIST_REFERRAL   // Cardiology, endocrinology, etc.
+  LAB_PANEL             // Comprehensive lab work
+  WELLNESS_PROGRAM      // Group program / coaching
+  FOLLOW_UP             // Routine follow-up appointment
+}
+
+enum ReferralStatus {
+  GENERATED    // CTA payload created
+  DELIVERED    // Shown to user in app
+  CLICKED      // User interacted with CTA
+  CONVERTED    // Appointment booked / service purchased
+  DISMISSED    // User explicitly dismissed
+  EXPIRED      // No action within TTL
+}
+
+enum RateLimitTier {
+  STANDARD    // 100 req/min
+  PROFESSIONAL // 1000 req/min
+  ENTERPRISE   // Custom / unlimited
+}
+
+enum ConsentType {
+  DATA_PROCESSING      // Clinical data storage and processing
+  MARKETING            // Commercial communications
+  RESEARCH             // Anonymized use in research/insights
+  THIRD_PARTY_SHARING  // Sharing with partner systems (e.g. Disglobal)
+  BIOMETRIC_PROCESSING // Special category for biometric/health data
+}
+
+// =============================================================================
+// RELATIONS TO ADD to existing Patient model
+// (Append these to the Patient model's relation section in schema.prisma)
+// =============================================================================
+//
+//  biologicalAgeAssessments BiologicalAgeAssessment[]
+//  preventiveScores         PreventiveScore[]
+//  engagementEvents         EngagementEvent[]
+//  engagementScore          EngagementScore?
+//  referralEvents           ReferralEvent[]
+//  consentRecords           ConsentRecord[]
+//
+// =============================================================================

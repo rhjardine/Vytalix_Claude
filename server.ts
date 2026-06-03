@@ -1,125 +1,142 @@
 // =============================================================================
-// Vytalix API Server — Entry Point
-// Auth chain: CORS → helmet → correlation ID → metrics → auth → tenant → RBAC → handler
+// src/server.ts — Platform entry point
+// Mounts all routes. Start with: npm run api:dev
 // =============================================================================
 
+import 'dotenv/config'
 import express from 'express'
-import cors from 'cors'
-import helmet from 'helmet'
-import { randomUUID } from 'crypto'
-import { logger } from './lib/logger'
-import {
-  authMiddleware, loginHandler, meHandler,
-  requireRole, requireMinRole,
-} from './auth/auth.middleware'
-import { tenantMiddleware } from './middleware/tenant.middleware'
-import { errorHandler } from './middleware/error.middleware'
-import { demoLoggingMiddleware, getDemoStatus } from './demo/demo-status'
-import { registerCoreSubscriptions } from './events/event-bus'
-import {
-  createPatient, listPatients, getPatient,
-  ingestObservation, getPatientObservations,
-  calculateRisk, getRiskHistory,
-  generateDecisions, getPatientDecisions,
-  getDecisionTrace, reviewDecision,
-  getPatientTimeline,
-} from './api/handlers'
-import { externalIngestObservations } from './api/external.handler'
-import { healthHandler, metricsHandler, metricsMiddleware } from './api/observability.handler'
-import { closeDb } from './lib/db'
+import helmet  from 'helmet'
+import cors    from 'cors'
+import crypto  from 'node:crypto'
+
+import { logger }          from './lib/logger'
+import { checkDbHealth }   from './lib/db'
+import { checkRedisHealth } from './lib/redis'
+import { flushMeterStream }  from './billing/metering.service'
+
+// ── Routers ───────────────────────────────────────────────────────
+import { createExternalV2Router }        from './api/external-v2.handler'
+import { createFunnelRouter, createExchangeRateHandler } from './funnel/funnel.handler'
+import { createBillingAdminRouter }      from './billing/billing-admin.handler'
+import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './pipeline/pipeline-v2.orchestrator'
+
+// ── App ───────────────────────────────────────────────────────────
 
 const app = express()
-const PORT = parseInt(process.env.API_PORT ?? '3001', 10)
 
 // ── Security headers ──────────────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false }))
-app.use(cors({
-  origin: (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(','),
-  credentials: true,
-  exposedHeaders: ['X-Correlation-ID'],
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"] }
+  }
 }))
-app.use(express.json({ limit: '5mb' }))
-app.use(express.urlencoded({ extended: true }))
 
-// ── Correlation ID (every request gets one) ────────────────────────
-app.use((req, res, next) => {
-  const id = (req.headers['x-correlation-id'] as string) ?? randomUUID()
-  res.setHeader('X-Correlation-ID', id)
-  ;(req as any).correlationId = id
+// ── CORS ──────────────────────────────────────────────────────────
+app.use(cors({
+  origin: (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000').split(','),
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type', 'Authorization', 'X-Tenant-ID', 'X-API-Key',
+    'X-Idempotency-Key', 'X-Correlation-ID',
+  ],
+  credentials: true,
+}))
+
+// ── Body parsing ──────────────────────────────────────────────────
+app.use(express.json({ limit: '2mb' }))
+app.use(express.urlencoded({ extended: true, limit: '2mb' }))
+
+// ── Correlation ID on every request ──────────────────────────────
+app.use((req, _res, next) => {
+  ;(req as any).correlationId = (req.headers['x-correlation-id'] as string) || crypto.randomUUID()
   next()
 })
 
-// ── Observability ──────────────────────────────────────────────────
-app.use(metricsMiddleware)
-app.use(demoLoggingMiddleware)
-
-// ── Public routes (no auth) ────────────────────────────────────────
-app.get('/health',       healthHandler)
-app.get('/metrics',      metricsHandler)
-app.get('/demo/status',  getDemoStatus)
-
-// ── Auth routes (public — no JWT required) ─────────────────────────
-app.post('/auth/login',  loginHandler)
-app.get('/auth/me',      authMiddleware, meHandler)
-
-// ── External integration (API key — NOT JWT) ───────────────────────
-app.post('/api/external/observations', externalIngestObservations)
-
-// ── Protected clinical API ─────────────────────────────────────────
-const api = express.Router()
-api.use(authMiddleware)
-api.use(tenantMiddleware)
-
-// --- Patients ---
-// PHYSICIAN, ORG_ADMIN can create patients. VIEWER and PARTNER cannot.
-api.post('/patients',           requireMinRole('PHYSICIAN'), createPatient)
-api.get('/patients',            requireMinRole('VIEWER'),    listPatients)
-api.get('/patients/:id',        requireMinRole('VIEWER'),    getPatient)
-api.get('/patients/:id/observations', requireMinRole('VIEWER'),    getPatientObservations)
-api.get('/patients/:id/risk',   requireMinRole('VIEWER'),    getRiskHistory)
-api.get('/patients/:id/decisions', requireMinRole('VIEWER'), getPatientDecisions)
-api.get('/patients/:id/timeline',  requireMinRole('VIEWER'), getPatientTimeline)
-
-// --- Observations ---
-// Only PHYSICIAN+ can ingest data
-api.post('/observations',       requireMinRole('PHYSICIAN'), ingestObservation)
-
-// --- Risk Scoring ---
-// CARE_COORDINATOR+ can trigger risk calculation
-api.post('/risk/calculate',     requireMinRole('CARE_COORDINATOR'), calculateRisk)
-
-// --- Decisions ---
-// Generating decisions requires PHYSICIAN level
-api.post('/decisions/generate', requireMinRole('PHYSICIAN'),        generateDecisions)
-api.get('/decisions/:id/trace', requireMinRole('VIEWER'),           getDecisionTrace)
-// Only PHYSICIAN+ can review (accept/reject) recommendations
-api.patch('/decisions/:id/review', requireMinRole('PHYSICIAN'),     reviewDecision)
-
-app.use('/v1', api)
-
-// ── Error handler (must be last) ──────────────────────────────────
-app.use(errorHandler)
-
-// ── Startup ───────────────────────────────────────────────────────
-registerCoreSubscriptions()
-
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV }, 'Vytalix API server started')
-  if (process.env.NODE_ENV !== 'production') {
-    logger.info(`  Health:  http://localhost:${PORT}/health`)
-    logger.info(`  Demo:    http://localhost:${PORT}/demo/status`)
-    logger.info(`  API:     http://localhost:${PORT}/v1/patients`)
-    logger.info(`  Docs:    http://localhost:${PORT}/auth/login  POST`)
-  }
+// ── Request logger ────────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = Date.now()
+  res.on('finish', () =>
+    logger.info({
+      method: req.method, path: req.path,
+      status: res.statusCode, ms: Date.now() - start,
+      correlationId: (req as any).correlationId,
+    }, 'HTTP')
+  )
+  next()
 })
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received — shutting down gracefully')
-  server.close(async () => {
-    await closeDb()
-    process.exit(0)
+// ── Health & Observability (public) ──────────────────────────────
+app.get('/health', async (_req, res) => {
+  const [db, redis] = await Promise.all([checkDbHealth(), checkRedisHealth()])
+  const status = db && redis ? 'ok' : 'degraded'
+  res.status(status === 'ok' ? 200 : 503).json({
+    status,
+    version:   process.env.npm_package_version ?? '0.9.0',
+    timestamp: new Date().toISOString(),
+    checks:    { database: db ? 'ok' : 'error', redis: redis ? 'ok' : 'degraded' },
   })
 })
 
-export default app
+app.get('/metrics', (_req, res) => {
+  // In Fase 4: export Prometheus metrics
+  res.json({ note: 'Prometheus endpoint — Phase 4', uptime: process.uptime() })
+})
+
+// ── Public Funnel API (no auth) ───────────────────────────────────
+app.use('/api/funnel',        createFunnelRouter())
+app.use('/api/exchange-rate', createExchangeRateHandler())
+
+// ── External API v2 (API Key auth — Disglobal + partners) ────────
+app.use('/api/v2', createExternalV2Router())
+
+// ── Admin API (JWT auth — internal only) ─────────────────────────
+app.use('/admin', createBillingAdminRouter())
+
+// ── RFC 7807 Error handler (last middleware) ──────────────────────
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status  = err.statusCode ?? err.status ?? 500
+  const message = status < 500 ? err.message : 'Internal server error'
+  logger.error({ err, status }, 'Unhandled error')
+  res.status(status).json({
+    type:   `https://api.vytalix.health/errors/${status}`,
+    title:  status < 500 ? 'Request Error' : 'Internal Server Error',
+    status,
+    detail: message,
+  })
+})
+
+// ── Platform event wiring ─────────────────────────────────────────
+const platformOrchestrator = new PlatformPipelineOrchestrator()
+registerPlatformEventListeners(platformOrchestrator)
+
+// ── Metering flush (every 60s) ────────────────────────────────────
+setInterval(async () => {
+  const flushed = await flushMeterStream()
+  if (flushed > 0) logger.debug({ flushed }, 'Meter events flushed')
+}, 60_000)
+
+// ── Start ─────────────────────────────────────────────────────────
+const PORT = Number(process.env.PORT ?? 3001)
+app.listen(PORT, () => {
+  logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, '🚀 Vytalix Platform started')
+  logger.info({
+    routes: [
+      'GET  /health', 'GET  /metrics',
+      'POST /api/funnel/leads',
+      'POST /api/funnel/vitality-assessment',
+      'POST /api/funnel/facial-analysis (stub)',
+      'POST /api/funnel/booking',
+      'GET  /api/exchange-rate',
+      'POST /api/v2/vitality/assess',
+      'GET  /api/v2/vitality/:subjectRef',
+      'POST /api/v2/preventive/score',
+      'GET  /api/v2/referral/:subjectRef',
+      'POST /api/v2/engagement/events',
+      'GET  /api/v2/insights/cohort',
+      'POST /admin/tenants/:id/api-keys',
+      'GET  /admin/tenants/:id/usage',
+    ]
+  }, 'Route manifest')
+})
+
+export { app }

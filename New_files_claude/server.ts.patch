@@ -1,0 +1,156 @@
+// =============================================================================
+// MODIFICACIONES A server.ts — AGREGAR estas secciones en el orden indicado
+//
+// INSTRUCCIÓN PARA CLAUDE CODE:
+//   1. Abrir src/server.ts
+//   2. Agregar los imports del BLOQUE A después de los imports existentes
+//   3. Agregar el middleware del BLOQUE B después de los middlewares existentes
+//   4. Agregar las rutas del BLOQUE C antes de app.use('/v1', api)
+//   5. Agregar las variables del BLOQUE D a .env.example
+// =============================================================================
+
+// ─── BLOQUE A: IMPORTS (agregar después de los imports existentes) ────────────
+
+/*
+import {
+  handleSubmitLead,
+  handleSubmitAssessment,
+  handleFacialAnalysis,
+  handleBooking,
+} from './api/funnel.handler'
+
+import { exchangeRateHandler } from './api/exchange-rate.handler'
+*/
+
+// ─── BLOQUE B: MIDDLEWARE FUNNEL KEY (agregar después de los middlewares JWT) ─
+
+/*
+// Middleware de autenticación para el funnel público (API key pública)
+// Separado del JWT médico — rutas /api/funnel/* no requieren sesión de médico
+function funnelKeyMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const key      = req.headers['x-funnel-key'] as string | undefined
+  const validKey = process.env.FUNNEL_API_KEY ?? 'dev_funnel_key'
+
+  if (!key || key !== validKey) {
+    res.status(401).json({
+      type:   'https://api.vytalix.health/errors/401',
+      title:  'Unauthorized',
+      status: 401,
+      detail: 'Missing or invalid X-Funnel-Key header',
+    })
+    return
+  }
+  next()
+}
+*/
+
+// ─── BLOQUE C: RUTAS DEL FUNNEL (agregar ANTES de app.use('/v1', api)) ────────
+
+/*
+// ── Funnel público (captación de leads desde la landing) ──
+// Auth: X-Funnel-Key (API key pública, distinta del JWT médico)
+// Rate limiting: heredado del middleware global de Express
+app.post('/api/funnel/leads',               funnelKeyMiddleware, handleSubmitLead)
+app.post('/api/funnel/vitality-assessment', funnelKeyMiddleware, handleSubmitAssessment)
+app.post('/api/funnel/facial-analysis',     funnelKeyMiddleware, handleFacialAnalysis)
+app.post('/api/funnel/booking',             funnelKeyMiddleware, handleBooking)
+
+// ── Tasa de cambio (sin auth — endpoint público cacheado) ──
+app.get('/api/exchange-rate', exchangeRateHandler)
+*/
+
+// ─── BLOQUE D: VARIABLES DE ENTORNO ──────────────────────────────────────────
+// Agregar al .env.example del backend:
+
+/*
+# ── Funnel público ──────────────────────────────────────────────────────────
+# API key que el frontend debe enviar en el header X-Funnel-Key
+# Cambiar en producción — mínimo 32 caracteres alfanuméricos
+FUNNEL_API_KEY=dev_funnel_key_CHANGE_IN_PRODUCTION_min32chars
+
+# UUID del tenant por defecto para leads del funnel público
+# En producción cada instancia tiene su propio tenant
+DEFAULT_FUNNEL_TENANT_ID=a1b2c3d4-0000-4000-8000-000000000001
+
+# ── AgeBot / Visión computacional ────────────────────────────────────────────
+# Proveedor de análisis facial: mock | openai | azure | aws
+# En desarrollo usar 'mock' — resultado determinístico, sin costo
+VISION_PROVIDER=mock
+
+# Solo si VISION_PROVIDER=openai:
+# OPENAI_API_KEY=sk-...
+
+# Solo si VISION_PROVIDER=azure:
+# AZURE_FACE_KEY=...
+# AZURE_FACE_ENDPOINT=https://...
+
+# ── WhatsApp (canal primario Venezuela) ──────────────────────────────────────
+# Número con código de país, sin +, sin espacios
+WHATSAPP_NUMBER=58412XXXXXXX
+
+# ── Exchange rate ─────────────────────────────────────────────────────────────
+# Segundos de vida del cache Redis para las tasas BCV/paralelo
+EXCHANGE_RATE_CACHE_TTL=60
+*/
+
+// =============================================================================
+// VERIFICACIÓN POST-IMPLEMENTACIÓN
+// Ejecutar estos curl para confirmar que los endpoints funcionan:
+// =============================================================================
+
+/*
+# 1. Lead
+curl -s -X POST http://localhost:3001/api/funnel/leads \
+  -H "Content-Type: application/json" \
+  -H "X-Funnel-Key: dev_funnel_key" \
+  -d '{
+    "name": "Dr. Anibal Freites",
+    "email": "anibal@clinica.ve",
+    "interestType": "ODONTOLOGIA_LONGEVIDAD",
+    "source": "CTA_FORM",
+    "consentMarketing": true,
+    "consentDataProcessing": true
+  }' | jq .
+
+# Esperado: { "data": { "id": "uuid", "status": "NEW" } }
+
+# 2. Tasa de cambio
+curl -s http://localhost:3001/api/exchange-rate | jq .
+
+# Esperado: { "data": { "bcv": { "usdToVes": 36.xx }, "parallel": { ... } } }
+
+# 3. Assessment
+curl -s -X POST http://localhost:3001/api/funnel/vitality-assessment \
+  -H "Content-Type: application/json" \
+  -H "X-Funnel-Key: dev_funnel_key" \
+  -d '{
+    "score": 62,
+    "category": "BUENO",
+    "yearsBiological": 48,
+    "chronologicalAgeGroup": "45",
+    "dimensions": {
+      "energiaEstadoMental": 70,
+      "suenoCognicion": 55,
+      "composicionCorporal": 60,
+      "signosEnvejecimiento": 65,
+      "rangoEdad": 58
+    },
+    "answersPayload": { "R1": true, "R2": false },
+    "completedAt": "2026-05-19T15:00:00Z"
+  }' | jq .
+
+# 4. Booking (WhatsApp fallback)
+curl -s -X POST http://localhost:3001/api/funnel/booking \
+  -H "Content-Type: application/json" \
+  -H "X-Funnel-Key: dev_funnel_key" \
+  -d '{
+    "name": "Dr. Anibal Freites",
+    "email": "anibal@clinica.ve",
+    "consultationType": "EXPLORATORIA_DENTAL",
+    "vitalityScore": 62,
+    "vitalityCategory": "BUENO"
+  }' | jq .
+
+# Esperado: { "data": { "status": "WHATSAPP_ONLY", "confirmationCode": "VYT...",
+#             "whatsappFallbackUrl": "https://wa.me/..." } }
+*/

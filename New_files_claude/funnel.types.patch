@@ -1,0 +1,67 @@
+// =============================================================================
+// PATCH PARA src/types/funnel.ts — Sprint 3
+//
+// INSTRUCCIÓN PARA CLAUDE CODE:
+//   Abrir src/types/funnel.ts y REEMPLAZAR la función mapDimensiones.
+//   El calcularScore() de tests.tsx devuelve { dimensiones: { grupo1..grupo5 } }
+//   Esta función traduce ese shape al contrato VitalityDimensions.
+// =============================================================================
+
+// REEMPLAZAR la función mapDimensiones existente por esta versión
+// que coincide con el shape EXACTO de calcularScore() en tests.tsx:
+
+/*
+/**
+ * Traduce el campo `dimensiones` del calcularScore() existente
+ * al contrato VitalityDimensions que espera el backend.
+ *
+ * calcularScore() devuelve:
+ *   { dimensiones: { grupo1: number, grupo2: number, ... grupo5: number } }
+ *
+ * VitalityDimensions requiere:
+ *   { energiaEstadoMental, suenoCognicion, composicionCorporal,
+ *     signosEnvejecimiento, rangoEdad }
+ *
+ * @param dimensiones - Objeto dimensiones del resultado de calcularScore()
+ *\/
+export function mapDimensiones(
+  dimensiones: Record<string, number>
+): VitalityDimensions {
+  return {
+    energiaEstadoMental:  Math.round(dimensiones['grupo1'] ?? 0),
+    suenoCognicion:       Math.round(dimensiones['grupo2'] ?? 0),
+    composicionCorporal:  Math.round(dimensiones['grupo3'] ?? 0),
+    signosEnvejecimiento: Math.round(dimensiones['grupo4'] ?? 0),
+    rangoEdad:            Math.round(dimensiones['grupo5'] ?? 0),
+  }
+}
+*/
+
+// =============================================================================
+// TAMBIÉN AGREGAR al final de src/types/funnel.ts:
+// Helper para mapear el interestType del formulario CTA al enum del contrato
+// =============================================================================
+
+/*
+/**
+ * Mapea el value del select de interestType (formato slug del CTA)
+ * al enum FunnelInterestType que espera el backend.
+ *
+ * Ejemplo: 'demo-de-la-plataforma' → 'DEMO_PLATAFORMA'
+ *\/
+export function mapInterestType(slug: string): FunnelInterestType {
+  const map: Record<string, FunnelInterestType> = {
+    'demo-de-la-plataforma':    'DEMO_PLATAFORMA',
+    'integracion-emr':          'INTEGRACION_EMR',
+    'partnership-clinico':      'PARTNERSHIP_CLINICO',
+    'informacion-general':      'INFORMACION_GENERAL',
+    'longevidad-clinica':       'LONGEVIDAD_CLINICA',
+    'odontologia-longevidad':   'ODONTOLOGIA_LONGEVIDAD',
+    'turismo-de-salud':         'TURISMO_SALUD',
+    // Alias para el contexto venezolano / Dr. Anibal Freites
+    'odontologia-restauradora': 'ODONTOLOGIA_LONGEVIDAD',
+    'medicina-preventiva':      'LONGEVIDAD_CLINICA',
+  }
+  return map[slug] ?? 'INFORMACION_GENERAL'
+}
+*/
