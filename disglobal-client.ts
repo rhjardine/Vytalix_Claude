@@ -15,11 +15,13 @@
 // =============================================================================
 
 import crypto from 'node:crypto'
+import { logger } from './logger'
 
 // ── Configuration ─────────────────────────────────────────────────
 
 export interface DisgglobalClientConfig {
   apiKey:      string
+  tenantSecret?: string
   baseUrl?:    string    // defaults to https://api.vytalix.health
   timeoutMs?:  number    // defaults to 10_000
 }
@@ -72,11 +74,18 @@ export interface DisgglobalCTA {
 
 export class DisgglobalVytalixClient {
   private readonly apiKey:   string
+  private readonly tenantSecret: string
   private readonly baseUrl:  string
   private readonly timeout:  number
 
   constructor(config: DisgglobalClientConfig) {
     this.apiKey  = config.apiKey
+    if (config.tenantSecret) {
+      this.tenantSecret = config.tenantSecret
+    } else {
+      logger.warn('DEPRECATED: pseudonymization using apiKey fallback. Please provide tenantSecret.')
+      this.tenantSecret = config.apiKey
+    }
     this.baseUrl = config.baseUrl ?? 'https://api.vytalix.health'
     this.timeout = config.timeoutMs ?? 10_000
   }
@@ -221,7 +230,7 @@ export class DisgglobalVytalixClient {
    * Same userId always maps to same subjectRef — consistent across calls.
    */
   private pseudonymize(userId: string): string {
-    const hash = crypto.createHmac('sha256', this.apiKey)
+    const hash = crypto.createHmac('sha256', this.tenantSecret)
       .update(`DISG:${userId}`)
       .digest('base64url')
       .slice(0, 20)

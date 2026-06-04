@@ -7,7 +7,7 @@
 
 **¿Cómo manejan multi-tenancy y aislamiento de datos?**
 
-Row-Level Security (RLS) en PostgreSQL. Cada tabla clínica tiene políticas RLS activas con `FORCE ROW LEVEL SECURITY`. El contexto de tenant (`app.current_tenant`) se establece dentro de cada transacción como `SET LOCAL` — se limpia automáticamente al finalizar la transacción. Un bug en la aplicación que olvide incluir el tenant_id es rechazado por el motor de base de datos antes de llegar a los datos. Este es el aislamiento en la última línea de defensa posible.
+Row-Level Security (RLS) en PostgreSQL. Cada tabla clínica tiene políticas RLS activas con `FORCE ROW LEVEL SECURITY`. El contexto de tenant (`app.current_tenant_id`) se establece dentro de cada transacción como `set_config` — se limpia automáticamente al finalizar la transacción. Un bug en la aplicación que olvide incluir el tenant_id es rechazado por el motor de base de datos antes de llegar a los datos. Este es el aislamiento en la última línea de defensa posible.
 
 **¿Está alineado con HIPAA?**
 

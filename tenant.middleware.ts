@@ -5,7 +5,7 @@
 //   1. authMiddleware  → validates JWT, sets req.user
 //   2. tenantMiddleware → validates tenant_id matches JWT, injects RLS context
 //
-// The RLS context (app.current_tenant) is set per-query in getTenantDb().
+// The RLS context (app.current_tenant_id) is set per-query in getTenantDb().
 // This middleware just validates consistency between the JWT tenant_id and
 // any explicit X-Tenant-ID header (they must match or the request is rejected).
 //
@@ -50,6 +50,6 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
   }
 
   // Tenant context is available via req.user.tenant_id in all handlers
-  // getTenantDb(req.user.tenant_id) uses this to set app.current_tenant
+  // getTenantDb(req.user.tenant_id) uses this to set app.current_tenant_id
   next()
 }

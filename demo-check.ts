@@ -75,7 +75,7 @@ async function run() {
 
   // ── Patients ─────────────────────────────────────────────────
   // Bypass RLS for check (uses raw query without tenant context)
-  await prisma.$executeRaw`SET app.current_tenant = ${DEMO.TENANT.ID}::uuid`
+  await prisma.$executeRaw`SELECT set_config('app.current_tenant_id', ${DEMO.TENANT.ID}::text, true)`
   const p1 = await prisma.$queryRaw<any[]>`SELECT id, mrn FROM patients WHERE id = ${DEMO.PATIENT_1.ID}::uuid`
   const p2 = await prisma.$queryRaw<any[]>`SELECT id, mrn FROM patients WHERE id = ${DEMO.PATIENT_2.ID}::uuid`
   check('Patient 1 — Roberto Vargas', p1.length > 0, p1[0]?.mrn ?? 'NOT FOUND')

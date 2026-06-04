@@ -26,7 +26,7 @@ async function main() {
   console.log(`✓ Tenant: ${tenant.name} (${tenant.id})`)
 
   // For seeding we bypass RLS by setting the session variable directly.
-  await prisma.$executeRaw`SET app.current_tenant = ${tenant.id}`
+  await prisma.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenant.id}, true)`
 
   // ---------------------------------------------------------------------------
   // 2. Organization

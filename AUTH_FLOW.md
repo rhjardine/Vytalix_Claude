@@ -23,10 +23,10 @@ Client → GET /v1/patients (Authorization: Bearer <jwt>)
            ↓
          handler → getTenantDb(req.user.tenant_id)
                      ↓
-                   $tx() → SET LOCAL app.current_tenant = <uuid>
+                   $tx() → SELECT set_config('app.current_tenant_id', <uuid>, true)
                      ↓
                    PostgreSQL RLS policy:
-                   USING (tenant_id = current_setting('app.current_tenant')::uuid)
+                   USING (tenant_id = current_setting('app.current_tenant_id')::uuid)
 ```
 
 ---
@@ -127,7 +127,7 @@ curl -s http://localhost:3001/v1/patients \
 # Even if application code forgot the WHERE clause, RLS blocks the data
 # This is verifiable in psql:
 docker compose exec postgres psql -U vytalix -d vytalix_dev -c "
-  SET app.current_tenant = '99999999-0000-4000-8000-000000000000';
+  SELECT set_config('app.current_tenant_id', '99999999-0000-4000-8000-000000000000', true);
   SELECT COUNT(*) FROM patients;
   -- Expected: 0 (RLS filters all rows for unknown tenant)
 "

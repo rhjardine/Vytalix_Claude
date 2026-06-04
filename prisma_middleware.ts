@@ -53,7 +53,7 @@ export async function getTenantDb(tenantId: string) {
       return basePrisma.$transaction(async (tx) => {
         // SET LOCAL scopes the variable to this transaction only.
         // If the connection is reused after this transaction, the variable is gone.
-        await tx.$executeRaw`SET LOCAL app.current_tenant = ${tenantId}`
+        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`
         return fn(tx)
       })
     },
@@ -97,7 +97,7 @@ function createTenantModelProxy<M extends keyof PrismaClient>(
 
       return async (...args: unknown[]) => {
         return prisma.$transaction(async (tx) => {
-          await tx.$executeRaw`SET LOCAL app.current_tenant = ${tenantId}`
+          await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`
           const txDelegate = tx[model as keyof typeof tx] as Record<string, (...a: unknown[]) => Promise<unknown>>
           return txDelegate[prop](...args)
         })

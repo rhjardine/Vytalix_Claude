@@ -66,8 +66,9 @@ export async function withTenant<T>(
   const client = await pool.connect()
 
   try {
-    // Enable RLS context for this connection
-    await client.query(`SET LOCAL app.current_tenant_id = '${tenantId}'`)
+    await client.query('BEGIN')
+    // Enable RLS context for this connection securely using set_config
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId])
 
     const tc: TenantClient = {
       async queryOne<R = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<R | null> {
@@ -83,7 +84,12 @@ export async function withTenant<T>(
       },
     }
 
-    return await fn(tc)
+    const result = await fn(tc)
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
   } finally {
     client.release()
   }

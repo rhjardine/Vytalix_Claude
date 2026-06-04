@@ -68,7 +68,7 @@ Observación → Validación LOINC + bounds → Normalización → Snapshot →
 Risk Score (Framingham 2008) → 5 reglas hardened → DecisionTrace → Narrativa
 ```
 
-**Multi-tenancy:** Row-Level Security en PostgreSQL. No es un filtro en la aplicación — es una política en el motor. `SET LOCAL app.current_tenant = <uuid>` dentro de cada transacción. Si hay un bug que olvide el WHERE, el motor lo rechaza.
+**Multi-tenancy:** Row-Level Security en PostgreSQL. No es un filtro en la aplicación — es una política en el motor. `SELECT set_config('app.current_tenant_id', <uuid>, true)` dentro de cada transacción. Si hay un bug que olvide el WHERE, el motor lo rechaza.
 
 **Explainability sin LLM libre:** Cada `DecisionTrace` es un registro inmutable con: reglas evaluadas, valores exactos usados, referencia a guía clínica, nivel de evidencia. Reproducible. No hay texto generado no verificable.
 
@@ -110,7 +110,7 @@ La arquitectura implementa los controles técnicos requeridos (encryption at res
 En MVP: Framingham 2008 Updated (algoritmo determinístico, no ML). Las reglas clínicas son explícitas, no aprendidas. El roadmap V1 incluye modelos de predicción como capa secundaria, siempre con reglas determinísticas como primera línea.
 
 **¿Cómo manejan multi-tenancy?**
-Row-Level Security en PostgreSQL. Cada query se ejecuta dentro de una transacción con `SET LOCAL app.current_tenant = <uuid>`. Si el código application olvida el filtro, el motor lo rechaza. Demostrable en vivo con psql.
+Row-Level Security en PostgreSQL. Cada query se ejecuta dentro de una transacción con `SELECT set_config('app.current_tenant_id', <uuid>, true)`. Si el código application olvida el filtro, el motor lo rechaza. Demostrable en vivo con psql.
 
 **¿Qué pasa si el sistema falla durante uso clínico?**
 Vytalix es un sistema de soporte, no de ejecución. Si Vytalix falla, el médico continúa trabajando en su EMR habitual. Las alertas no llegan, pero el flujo clínico base no se interrumpe.

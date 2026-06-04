@@ -213,7 +213,7 @@ No es un fallo técnico — es una oportunidad. Respuestas preparadas:
 
 **"¿Cómo garantizan que los datos de nuestros pacientes no se mezclan con otros clientes?"**
 > Misma respuesta que multi-tenancy, agregar:
-> "Cada query va con `SET LOCAL app.current_tenant = <uuid>` dentro de la transacción.
+> "Cada query va con `SELECT set_config('app.current_tenant_id', <uuid>, true)` dentro de la transacción.
 > Si la transacción termina sin completarse, el contexto se limpia automáticamente."
 
 **"¿Qué pasa si el scoring de Framingham no es el algoritmo correcto para nosotros?"**

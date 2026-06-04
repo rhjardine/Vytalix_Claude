@@ -1,5 +1,5 @@
 // =============================================================================
-// BiophysicsEngine — Doctor Antivejez Algorithm
+// BiophysicsEngine — Doctor Antivejez Algorithm v2.1.0
 // Desacoplado del frontend Next.js. Consumible como servicio puro.
 //
 // Algorithm:
@@ -9,11 +9,14 @@
 //   3. Final biological age = weighted average of partial ages
 //   4. Differential = biologicalAge - chronologicalAge
 //
+// Pure functions are exported for direct unit testing and external use.
+// The BiophysicsEngine class composes them and adds logging.
+//
 // Baremos are fetched from DB or Redis cache (24h TTL).
 // All computations are deterministic and reproducible given the same inputs.
 // =============================================================================
 
-import { logger } from '../lib/logger'
+import { logger } from './logger'
 
 // ─────────────────────────────────────────────────────────────────
 // Types
@@ -49,12 +52,20 @@ export interface BiophysicsPartialAges {
   diastolicAge: number
 }
 
+/** Full result including immutable audit fields for clinical traceability. */
 export interface BiophysicsResult {
   biologicalAge: number          // Rounded to 1 decimal
-  differentialAge: number        // Rounded to 1 decimal  
+  differentialAge: number        // Rounded to 1 decimal
   partialAges: BiophysicsPartialAges
   ageStatus: 'REJUVENECIDO' | 'NORMAL' | 'ENVEJECIDO'
   algorithmVersion: string
+  /** Exact inputs used to produce this result — stored for longitudinal replay. */
+  inputSnapshot: {
+    measurements: BiophysicsMeasurements
+    chronologicalAge: number
+    sex: BiologicalSex
+    isAthlete: boolean
+  }
   computedAt: Date
 }
 
@@ -77,7 +88,7 @@ export interface BoardData {
 // These weights are stable across versions (algorithm = "daaa-biophysics-v2")
 // ─────────────────────────────────────────────────────────────────
 
-const ITEM_WEIGHTS: Record<keyof BiophysicsPartialAges, number> = {
+export const ITEM_WEIGHTS: Readonly<Record<keyof BiophysicsPartialAges, number>> = {
   fatAge:       0.15,
   bmiAge:       0.15,
   reflexesAge:  0.15,
@@ -88,7 +99,7 @@ const ITEM_WEIGHTS: Record<keyof BiophysicsPartialAges, number> = {
   diastolicAge: 0.10,
 } as const
 
-const ALGORITHM_VERSION = 'daaa-biophysics-v2.1.0'
+export const ALGORITHM_VERSION = 'daaa-biophysics-v2.1.0'
 
 // ─────────────────────────────────────────────────────────────────
 // Default baremos — used when DB boards are unavailable
@@ -100,7 +111,7 @@ const ALGORITHM_VERSION = 'daaa-biophysics-v2.1.0'
 // loaded from DB have different coefficients.
 // ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_BOARDS_MALE_NONATHLTE: Record<string, BaremoRange[]> = {
+export const DEFAULT_BOARDS_MALE_NONATHLETE: Readonly<Record<string, BaremoRange[]>> = {
   fatPercentage: [
     { ageMin: 20, ageMax: 25, valueMin: 8,  valueMax: 14 },
     { ageMin: 25, ageMax: 30, valueMin: 10, valueMax: 17 },
@@ -178,225 +189,239 @@ const DEFAULT_BOARDS_MALE_NONATHLTE: Record<string, BaremoRange[]> = {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// BiophysicsEngine
+// Pure functions — exported for direct testing and composability.
+// These functions have NO side effects, NO I/O, NO logging.
+// Given identical inputs they always return identical outputs.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Reduces dimensional measurements to scalar values used by baremo lookup.
+ * - digitalReflexes → volume of parallelepiped (cm³)
+ * - staticBalance → product of displacement dimensions (stability score)
+ */
+export function reduceMeasurements(m: BiophysicsMeasurements): Record<string, number> {
+  const reflexVolume  = m.digitalReflexes.high * m.digitalReflexes.long * m.digitalReflexes.width
+  const balanceProduct = m.staticBalance.high * m.staticBalance.long * m.staticBalance.width
+
+  return {
+    fatPercentage:       m.fatPercentage,
+    bmi:                 m.bmi,
+    reflexes:            reflexVolume,
+    visualAccommodation: m.visualAccommodation,
+    balance:             balanceProduct,
+    skinHydration:       m.skinHydration,
+    systolicPressure:    m.systolicPressure,
+    diastolicPressure:   m.diastolicPressure,
+  }
+}
+
+/**
+ * Builds female-adjusted default boards by applying clinical offsets to the
+ * canonical male non-athlete baremos. Only used when DB boards are unavailable.
+ */
+export function buildFemaleDefaultBoards(): Record<string, BaremoRange[]> {
+  const femaleBoards: Record<string, BaremoRange[]> = JSON.parse(
+    JSON.stringify(DEFAULT_BOARDS_MALE_NONATHLETE)
+  )
+  // Fat percentage: female ranges ~7pp higher than male (ACS guidelines)
+  femaleBoards.fatPercentage = femaleBoards.fatPercentage.map((r: BaremoRange) => ({
+    ...r,
+    valueMin: r.valueMin + 7,
+    valueMax: r.valueMax + 7,
+  }))
+  // Skin hydration: slightly higher baseline for females
+  femaleBoards.skinHydration = femaleBoards.skinHydration.map((r: BaremoRange) => ({
+    ...r,
+    valueMin: r.valueMin + 3,
+    valueMax: r.valueMax + 3,
+  }))
+  return femaleBoards
+}
+
+/**
+ * Resolves which board map to use.
+ * DB boards take precedence. Falls back to sex-specific defaults.
+ * INTERSEX uses male non-athlete boards — extend with DB boards when needed.
+ *
+ * @param boards - Optional override boards from DB
+ * @param sex    - Biological sex for fallback board selection
+ * @returns      - Map of measurementKey → BaremoRange[]
+ */
+export function resolveBoardsMap(
+  boards: BoardData[] | undefined,
+  sex: BiologicalSex,
+): Record<string, BaremoRange[]> {
+  if (boards && boards.length > 0) {
+    return Object.fromEntries(boards.map(b => [b.measurementKey, b.ranges]))
+  }
+  if (sex === 'FEMALE') return buildFemaleDefaultBoards()
+  return DEFAULT_BOARDS_MALE_NONATHLETE as Record<string, BaremoRange[]>
+}
+
+/**
+ * Interpolates biological age for a single measurement against its baremo ranges.
+ *
+ * The baremo defines: at ageMin → normal range is [valueMin, valueMax].
+ * We find which age bracket the measurement's position maps to.
+ *
+ * Algorithm:
+ *   - Find the range bracket where value fits within ±halfSpread of midValue.
+ *   - Interpolate linearly between ageMin and ageMax.
+ *   - If value is outside all brackets → clamp to extremes (explicit fallback).
+ *
+ * @param value            - Scalar measurement value
+ * @param ranges           - Baremo ranges for this measurement
+ * @param chronologicalAge - Used as safe fallback when no ranges are defined
+ * @returns                - Interpolated biological age (years)
+ */
+export function interpolateAge(value: number, ranges: BaremoRange[], chronologicalAge: number): number {
+  if (!ranges || ranges.length === 0) {
+    // EXPLICIT FALLBACK: no baremo available — return chronological age.
+    // This is intentionally conservative and traceable.
+    return chronologicalAge
+  }
+
+  // Sort ranges by ageMin ascending (defensive — should already be sorted)
+  const sorted = [...ranges].sort((a, b) => a.ageMin - b.ageMin)
+
+  for (const range of sorted) {
+    const midValue  = (range.valueMin + range.valueMax) / 2
+    const halfSpread = (range.valueMax - range.valueMin) / 2
+
+    if (value >= range.valueMin - halfSpread && value <= range.valueMax + halfSpread) {
+      const clampedValue = Math.max(range.valueMin, Math.min(range.valueMax, value))
+      const t           = halfSpread > 0 ? (clampedValue - midValue) / halfSpread : 0
+      const midAge      = (range.ageMin + range.ageMax) / 2
+      const halfAgeBracket = (range.ageMax - range.ageMin) / 2
+      return midAge + t * halfAgeBracket
+    }
+  }
+
+  // EXPLICIT FALLBACK: value outside all ranges — extrapolate from extremes.
+  // Logged by the caller (BiophysicsEngine) for traceability.
+  const lastRange  = sorted[sorted.length - 1]
+  const firstRange = sorted[0]
+  const firstMid   = (firstRange.valueMin + firstRange.valueMax) / 2
+  const lastMid    = (lastRange.valueMin  + lastRange.valueMax)  / 2
+  const higherMeansOlder = lastMid > firstMid
+
+  if (higherMeansOlder) {
+    if (value < firstRange.valueMin) return firstRange.ageMin
+    return lastRange.ageMax + (value - lastMid) * 0.5
+  } else {
+    if (value > firstRange.valueMax) return firstRange.ageMin
+    return lastRange.ageMax + (lastMid - value) * 0.5
+  }
+}
+
+/**
+ * Computes all 8 partial ages from scalar measurements and resolved boards.
+ *
+ * @param scalars          - Output of reduceMeasurements()
+ * @param chronologicalAge - Used as fallback when baremo is unavailable
+ * @param boards           - Resolved board map (output of resolveBoardsMap())
+ */
+export function computePartialAges(
+  scalars: Record<string, number>,
+  chronologicalAge: number,
+  boards: Record<string, BaremoRange[]>
+): BiophysicsPartialAges {
+  const interp = (key: string) =>
+    parseFloat(interpolateAge(scalars[key], boards[key] ?? [], chronologicalAge).toFixed(1))
+
+  return {
+    fatAge:       interp('fatPercentage'),
+    bmiAge:       interp('bmi'),
+    reflexesAge:  interp('reflexes'),
+    visualAge:    interp('visualAccommodation'),
+    balanceAge:   interp('balance'),
+    hydrationAge: interp('skinHydration'),
+    systolicAge:  interp('systolicPressure'),
+    diastolicAge: interp('diastolicPressure'),
+  }
+}
+
+/**
+ * Computes the weighted average of partial ages.
+ * Uses ITEM_WEIGHTS which must sum to 1.0. Divides by actual weight sum for safety.
+ */
+export function weightedAverage(partialAges: BiophysicsPartialAges): number {
+  let total = 0
+  let weightSum = 0
+  for (const [key, weight] of Object.entries(ITEM_WEIGHTS) as [keyof BiophysicsPartialAges, number][]) {
+    total += partialAges[key] * weight
+    weightSum += weight
+  }
+  return total / weightSum
+}
+
+/**
+ * Classifies differential age into clinical status categories.
+ * Thresholds: ≤ -2 years = REJUVENECIDO, ≥ +2 years = ENVEJECIDO, else NORMAL.
+ */
+export function classifyAgeStatus(differentialAge: number): BiophysicsResult['ageStatus'] {
+  if (differentialAge <= -2) return 'REJUVENECIDO'
+  if (differentialAge >= 2)  return 'ENVEJECIDO'
+  return 'NORMAL'
+}
+
+// ─────────────────────────────────────────────────────────────────
+// BiophysicsEngine — Orchestrator (with logging)
+// Composes pure functions and adds I/O-related concerns (logging, dates).
 // ─────────────────────────────────────────────────────────────────
 
 export class BiophysicsEngine {
-  private readonly algorithmVersion = ALGORITHM_VERSION
+  readonly algorithmVersion = ALGORITHM_VERSION
 
   /**
    * Compute biological age from biophysical measurements.
    *
-   * @param measurements - The 8 biophysical measurements
+   * @param measurements     - The 8 biophysical measurements
    * @param chronologicalAge - Patient's exact age in years (accepts decimals)
-   * @param sex - Biological sex for baremo selection
-   * @param isAthlete - Whether to use athlete-specific baremos
-   * @param boards - Optional override boards from DB (falls back to defaults)
+   * @param sex              - Biological sex for baremo selection
+   * @param isAthlete        - Whether to use athlete-specific baremos
+   * @param boards           - Optional override boards from DB (falls back to defaults)
+   * @param _now             - Injectable clock for testing (defaults to new Date())
    */
   compute(
     measurements: BiophysicsMeasurements,
     chronologicalAge: number,
     sex: BiologicalSex,
     isAthlete: boolean,
-    boards?: BoardData[]
+    boards?: BoardData[],
+    _now: Date = new Date()
   ): BiophysicsResult {
     const log = logger.child({ fn: 'BiophysicsEngine.compute', chronologicalAge, sex, isAthlete })
 
     // 1. Reduce dimensional measurements to scalar values
-    const scalars = this.reduceMeasurements(measurements)
+    const scalars = reduceMeasurements(measurements)
 
-    // 2. Load boards (DB boards take precedence over defaults)
-    const activeBoardsMap = this.buildBoardsMap(boards, sex, isAthlete)
+    // 2. Resolve boards (DB boards take precedence over defaults)
+    const activeBoardsMap = resolveBoardsMap(boards, sex)
 
     // 3. Compute partial ages by interpolation
-    const partialAges = this.computePartialAges(scalars, chronologicalAge, activeBoardsMap)
+    const partialAges = computePartialAges(scalars, chronologicalAge, activeBoardsMap)
 
     // 4. Weighted average → biological age
-    const biologicalAge = this.weightedAverage(partialAges)
-    const differentialAge = parseFloat((biologicalAge - chronologicalAge).toFixed(1))
-    const biologicalAgeRounded = parseFloat(biologicalAge.toFixed(1))
+    const biologicalAge     = parseFloat(weightedAverage(partialAges).toFixed(1))
+    const differentialAge   = parseFloat((biologicalAge - chronologicalAge).toFixed(1))
+    const ageStatus         = classifyAgeStatus(differentialAge)
 
-    const ageStatus = this.classifyStatus(differentialAge)
-
-    log.info({ biologicalAge: biologicalAgeRounded, differentialAge, ageStatus }, 'Biophysics computed')
+    log.info({ biologicalAge, differentialAge, ageStatus }, 'Biophysics computed')
 
     return {
-      biologicalAge: biologicalAgeRounded,
+      biologicalAge,
       differentialAge,
       partialAges,
       ageStatus,
       algorithmVersion: this.algorithmVersion,
-      computedAt: new Date(),
+      inputSnapshot: {
+        measurements,
+        chronologicalAge,
+        sex,
+        isAthlete,
+      },
+      computedAt: _now,
     }
-  }
-
-  // ── Reduce dimensional measurements to single scalar ─────────────
-
-  private reduceMeasurements(m: BiophysicsMeasurements): Record<string, number> {
-    // digitalReflexes: volume of the parallelepiped (cm³)
-    const reflexVolume = m.digitalReflexes.high * m.digitalReflexes.long * m.digitalReflexes.width
-
-    // staticBalance: product of displacement dimensions (balance stability score)
-    const balanceProduct = m.staticBalance.high * m.staticBalance.long * m.staticBalance.width
-
-    return {
-      fatPercentage:       m.fatPercentage,
-      bmi:                 m.bmi,
-      reflexes:            reflexVolume,
-      visualAccommodation: m.visualAccommodation,
-      balance:             balanceProduct,
-      skinHydration:       m.skinHydration,
-      systolicPressure:    m.systolicPressure,
-      diastolicPressure:   m.diastolicPressure,
-    }
-  }
-
-  // ── Build boards map: key → ranges ───────────────────────────────
-
-  private buildBoardsMap(
-    boards: BoardData[] | undefined,
-    sex: BiologicalSex,
-    _isAthlete: boolean
-  ): Record<string, BaremoRange[]> {
-    // If DB boards provided, use them
-    if (boards && boards.length > 0) {
-      return Object.fromEntries(boards.map(b => [b.measurementKey, b.ranges]))
-    }
-
-    // Fall back to defaults (male non-athlete for INTERSEX too — extend when needed)
-    // Female boards would have different fat% ranges, BP distributions, etc.
-    if (sex === 'FEMALE') {
-      // Return female-adjusted defaults. In production these come from DB.
-      // Applied adjustment: fat % female ranges ~5-8pp higher than male
-      return this.buildFemaleDefaultBoards()
-    }
-
-    return DEFAULT_BOARDS_MALE_NONATHLTE
-  }
-
-  private buildFemaleDefaultBoards(): Record<string, BaremoRange[]> {
-    // Clone male boards and apply female clinical adjustments
-    const femaleBoards: Record<string, BaremoRange[]> = JSON.parse(
-      JSON.stringify(DEFAULT_BOARDS_MALE_NONATHLTE)
-    )
-
-    // Fat percentage: female ranges ~5-8pp higher than male (ACS guidelines)
-    femaleBoards.fatPercentage = femaleBoards.fatPercentage.map(r => ({
-      ...r,
-      valueMin: r.valueMin + 7,
-      valueMax: r.valueMax + 7,
-    }))
-
-    // Skin hydration: slightly higher baseline for females
-    femaleBoards.skinHydration = femaleBoards.skinHydration.map(r => ({
-      ...r,
-      valueMin: r.valueMin + 3,
-      valueMax: r.valueMax + 3,
-    }))
-
-    return femaleBoards
-  }
-
-  // ── Interpolate partial age from a baremo range ───────────────────
-
-  /**
-   * Given a scalar measurement and the baremo ranges for that item,
-   * return the interpolated biological age.
-   *
-   * The baremo defines: at ageMin → normal range is [valueMin, valueMax]
-   * We find which age bracket the measurement's position maps to.
-   *
-   * Algorithm:
-   *   - Find the range bracket where value fits.
-   *   - Interpolate linearly between ageMin and ageMax.
-   *   - If value is outside all brackets → clamp to extremes.
-   */
-  private interpolateAge(value: number, ranges: BaremoRange[], chronologicalAge: number): number {
-    if (!ranges || ranges.length === 0) return chronologicalAge
-
-    // Sort ranges by ageMin ascending (defensive — should already be sorted)
-    const sorted = [...ranges].sort((a, b) => a.ageMin - b.ageMin)
-
-    for (const range of sorted) {
-      const midValue = (range.valueMin + range.valueMax) / 2
-      const halfSpread = (range.valueMax - range.valueMin) / 2
-
-      // Check if value falls within ±halfSpread of midValue for this age bracket
-      if (value >= range.valueMin - halfSpread && value <= range.valueMax + halfSpread) {
-        // Linear interpolation within the range
-        const clampedValue = Math.max(range.valueMin, Math.min(range.valueMax, value))
-        const t = halfSpread > 0 ? (clampedValue - midValue) / halfSpread : 0
-        const midAge = (range.ageMin + range.ageMax) / 2
-        const halfAgeBracket = (range.ageMax - range.ageMin) / 2
-        return midAge + t * halfAgeBracket
-      }
-    }
-
-    // Value outside all ranges — find best matching range and extrapolate
-    // For values indicating worse health (higher fat%, higher BP, lower hydration)
-    // we want to assign an older age.
-    const lastRange = sorted[sorted.length - 1]
-    const firstRange = sorted[0]
-
-    const firstMid = (firstRange.valueMin + firstRange.valueMax) / 2
-    const lastMid = (lastRange.valueMin + lastRange.valueMax) / 2
-
-    // Determine if higher value = older (e.g., fat%, BP) or younger (e.g., hydration, reflexes)
-    const higherMeansOlder = lastMid > firstMid
-
-    if (higherMeansOlder) {
-      if (value < firstRange.valueMin) return firstRange.ageMin
-      return lastRange.ageMax + (value - lastMid) * 0.5 // Extrapolate
-    } else {
-      if (value > firstRange.valueMax) return firstRange.ageMin
-      return lastRange.ageMax + (lastMid - value) * 0.5
-    }
-  }
-
-  // ── Compute all 8 partial ages ────────────────────────────────────
-
-  private computePartialAges(
-    scalars: Record<string, number>,
-    chronologicalAge: number,
-    boards: Record<string, BaremoRange[]>
-  ): BiophysicsPartialAges {
-    const interp = (key: string) =>
-      parseFloat(
-        this.interpolateAge(scalars[key], boards[key] ?? [], chronologicalAge).toFixed(1)
-      )
-
-    return {
-      fatAge:       interp('fatPercentage'),
-      bmiAge:       interp('bmi'),
-      reflexesAge:  interp('reflexes'),
-      visualAge:    interp('visualAccommodation'),
-      balanceAge:   interp('balance'),
-      hydrationAge: interp('skinHydration'),
-      systolicAge:  interp('systolicPressure'),
-      diastolicAge: interp('diastolicPressure'),
-    }
-  }
-
-  // ── Weighted average of partial ages ──────────────────────────────
-
-  private weightedAverage(partialAges: BiophysicsPartialAges): number {
-    let total = 0
-    let weightSum = 0
-
-    for (const [key, weight] of Object.entries(ITEM_WEIGHTS) as [keyof BiophysicsPartialAges, number][]) {
-      total += partialAges[key] * weight
-      weightSum += weight
-    }
-
-    // weightSum should be exactly 1.0, but divide for safety
-    return total / weightSum
-  }
-
-  // ── Age status classification ─────────────────────────────────────
-
-  private classifyStatus(differentialAge: number): BiophysicsResult['ageStatus'] {
-    if (differentialAge <= -2) return 'REJUVENECIDO'
-    if (differentialAge >= 2)  return 'ENVEJECIDO'
-    return 'NORMAL'
   }
 }
