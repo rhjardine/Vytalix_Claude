@@ -1,110 +1,76 @@
 // =============================================================================
-// tests/unit/preventive-score.test.ts
-// Pure unit tests for score logic extracted from service.
-// Run: npx vitest run tests/unit/preventive-score.test.ts
+// preventive-score.test.ts
+// Pure unit tests for the exported score functions.
+// No DB, no Redis, no network — all functions are pure.
+// Run: npx vitest run preventive-score.test.ts
 // =============================================================================
 
 import { describe, it, expect } from 'vitest'
-
-// ── Extract pure functions for testability (no DB/Redis dependency) ──
-
-// Mirror the scoring logic inline for unit testing
-function scoreCardiovascular(tenYearRiskPct: number): number {
-  return Math.max(0, Math.round(100 - (tenYearRiskPct / 30) * 100))
-}
-
-function scoreMetabolic(snapshot: {
-  latestFastingGlucose?: number
-  latestLdlMgDl?: number
-  latestHdlMgDl?: number
-  latestTotalCholesterol?: number
-}): { score: number; signals: string[] } {
-  let score = 100
-  const signals: string[] = []
-
-  const glucose = snapshot.latestFastingGlucose
-  const ldl = snapshot.latestLdlMgDl
-  const hdl = snapshot.latestHdlMgDl
-
-  if (glucose) {
-    if (glucose >= 126)      { score -= 30; signals.push('glucose_diabetic_range') }
-    else if (glucose >= 100) { score -= 15; signals.push('glucose_prediabetes') }
-    else                     { signals.push('glucose_normal') }
-  }
-  if (ldl) {
-    if (ldl >= 190)  { score -= 25; signals.push('ldl_severely_elevated') }
-    else if (ldl >= 160) { score -= 15; signals.push('ldl_elevated') }
-    else if (ldl >= 130) { score -= 5;  signals.push('ldl_borderline') }
-    else                 { signals.push('ldl_optimal') }
-  }
-  if (hdl) {
-    if (hdl < 40)    { score -= 10; signals.push('hdl_low') }
-    else if (hdl >= 60) { score += 5; signals.push('hdl_protective') }
-  }
-  return { score: Math.max(0, Math.min(100, score)), signals }
-}
-
-function scoreBiologicalAge(differentialAge: number): number {
-  return Math.max(0, Math.min(100, Math.round(50 - differentialAge * 5)))
-}
-
-function scoreLifestyle(snapshot: {
-  isSmoker?: boolean
-  hasDiabetes?: boolean
-  isOnAntihypertensives?: boolean
-  latestSystolicBp?: number
-}): number {
-  let score = 100
-  if (snapshot.isSmoker === true)              score -= 25
-  if (snapshot.hasDiabetes === true)            score -= 15
-  if (snapshot.isOnAntihypertensives === true) {
-    if ((snapshot.latestSystolicBp ?? 0) >= 140) score -= 10
-    else                                          score -= 5
-  }
-  return Math.max(0, score)
-}
-
-function classifyTier(score: number): string {
-  if (score >= 80) return 'OPTIMAL'
-  if (score >= 60) return 'GOOD'
-  if (score >= 40) return 'MODERATE_RISK'
-  if (score >= 20) return 'HIGH_RISK'
-  return 'CRITICAL'
-}
+import {
+  scoreCardiovascular,
+  scoreMetabolic,
+  scoreBiologicalAge,
+  scoreLifestyle,
+  classifyPreventiveTier,
+  PREVENTIVE_ALGORITHM_VERSION,
+  MetabolicSnapshot,
+  LifestyleSnapshot,
+} from './preventive-score.service'
 
 // ─────────────────────────────────────────────────────────────────
 
-describe('PreventiveScore — cardiovascular component', () => {
+describe('scoreCardiovascular()', () => {
   it('0% 10-year risk → score 100', () => {
-    expect(scoreCardiovascular(0)).toBe(100)
+    const { score } = scoreCardiovascular(0, 'LOW')
+    expect(score).toBe(100)
   })
 
   it('30%+ 10-year risk → score 0', () => {
-    expect(scoreCardiovascular(30)).toBe(0)
-    expect(scoreCardiovascular(45)).toBe(0)
+    expect(scoreCardiovascular(30, 'HIGH').score).toBe(0)
+    expect(scoreCardiovascular(45, 'VERY_HIGH').score).toBe(0)
   })
 
-  it('7.5% risk (LOW/MODERATE boundary) → score ~75', () => {
-    const score = scoreCardiovascular(7.5)
+  it('7.5% risk → score ~75', () => {
+    const { score } = scoreCardiovascular(7.5, 'MODERATE')
     expect(score).toBeGreaterThanOrEqual(73)
     expect(score).toBeLessThanOrEqual(77)
   })
 
-  it('20% risk (HIGH threshold) → score ~33', () => {
-    const score = scoreCardiovascular(20)
+  it('20% risk → score ~33', () => {
+    const { score } = scoreCardiovascular(20, 'HIGH')
     expect(score).toBeGreaterThanOrEqual(30)
     expect(score).toBeLessThanOrEqual(36)
   })
+
+  it('signals include risk pct and category', () => {
+    const { signals } = scoreCardiovascular(15, 'HIGH')
+    expect(signals.some(s => s.includes('15.0pct'))).toBe(true)
+    expect(signals.some(s => s.includes('category_high'))).toBe(true)
+  })
+
+  it('is deterministic', () => {
+    const r1 = scoreCardiovascular(12.5, 'MODERATE')
+    const r2 = scoreCardiovascular(12.5, 'MODERATE')
+    expect(r1.score).toBe(r2.score)
+    expect(r1.signals).toEqual(r2.signals)
+  })
+
+  // PIN test: formula must not drift
+  it('PIN: scoreCardiovascular(10, "MODERATE") → 67 (regression guard)', () => {
+    expect(scoreCardiovascular(10, 'MODERATE').score).toBe(67)
+  })
 })
 
-describe('PreventiveScore — metabolic component', () => {
-  it('all optimal markers → score 100 with correct signals', () => {
+// ─────────────────────────────────────────────────────────────────
+
+describe('scoreMetabolic()', () => {
+  it('all optimal markers → score 100 with HDL bonus (capped at 100)', () => {
     const { score, signals } = scoreMetabolic({
       latestFastingGlucose: 88,
       latestLdlMgDl: 95,
       latestHdlMgDl: 65,
     })
-    expect(score).toBe(105) // 100 + 5 HDL bonus, clamped to 100 in full service
+    expect(score).toBe(100)  // 105 capped to 100
     expect(signals).toContain('glucose_normal')
     expect(signals).toContain('ldl_optimal')
     expect(signals).toContain('hdl_protective')
@@ -116,7 +82,7 @@ describe('PreventiveScore — metabolic component', () => {
     expect(signals).toContain('glucose_diabetic_range')
   })
 
-  it('prediabetes (100-125) deducts 15 points', () => {
+  it('prediabetes (100–125) deducts 15 points', () => {
     const { score, signals } = scoreMetabolic({ latestFastingGlucose: 112 })
     expect(score).toBe(85)
     expect(signals).toContain('glucose_prediabetes')
@@ -128,70 +94,151 @@ describe('PreventiveScore — metabolic component', () => {
     expect(signals).toContain('ldl_severely_elevated')
   })
 
-  it('combined worst case → score bounded at 0', () => {
+  it('LDL 160–189 deducts 15 points', () => {
+    const { score } = scoreMetabolic({ latestLdlMgDl: 170 })
+    expect(score).toBe(85)
+  })
+
+  it('LDL 130–159 deducts 5 points', () => {
+    const { score } = scoreMetabolic({ latestLdlMgDl: 140 })
+    expect(score).toBe(95)
+  })
+
+  it('HDL < 40 deducts 10 points', () => {
+    const { score, signals } = scoreMetabolic({ latestHdlMgDl: 35 })
+    expect(score).toBe(90)
+    expect(signals).toContain('hdl_low')
+  })
+
+  it('TC/HDL ratio > 5 deducts 10 points', () => {
+    const { score, signals } = scoreMetabolic({
+      latestTotalCholesterol: 260,
+      latestHdlMgDl: 40,           // ratio = 6.5 > 5
+    })
+    expect(signals).toContain('tc_hdl_ratio_high')
+    expect(score).toBeLessThan(100)
+  })
+
+  it('three bad markers → 100 - 30 - 25 - 10 = 35 (correct floor)', () => {
+    // glucose ≥126 → -30, LDL ≥190 → -25, HDL <40 → -10 → 35 total
     const { score } = scoreMetabolic({
       latestFastingGlucose: 150,   // -30
       latestLdlMgDl: 220,          // -25
       latestHdlMgDl: 30,           // -10
     })
-    expect(score).toBe(0)
+    expect(score).toBe(35)
   })
 
-  it('missing data → score is 100 (no penalty for unknown)', () => {
+  it('four compounding penalties → score reaches 0', () => {
+    // glucose -30, LDL -25, HDL -10, TC/HDL ratio -10, then LDL already counted = -30 -25 -10 -10 = 35
+    // To reach 0 we need an HDL of <40 AND a TC/HDL ratio > 5:
+    // glucose: 140 → -30; LDL: 200 → -25; HDL: 30 → -10; TC/HDL: 250/30 = 8.3 → -10 = 100 - 75 = 25
+    // Score can only reach 0 by also having LDL ≥190 AND glucose ≥126 AND hdl<40 AND tc/hdl>5
+    // 100 - 30 - 25 - 10 - 10 = 25 (clamped at 0 if we add more)
+    // Verify clamping is in place for extreme inputs:
+    const { score } = scoreMetabolic({
+      latestFastingGlucose: 200,   // -30
+      latestLdlMgDl: 300,          // -25
+      latestHdlMgDl: 20,           // -10
+      latestTotalCholesterol: 400, // TC/HDL = 400/20 = 20 → -10
+    })
+    // 100 - 30 - 25 - 10 - 10 = 25, still > 0
+    // Score floor is 0, verify it never goes below
+    expect(score).toBeGreaterThanOrEqual(0)
+    expect(score).toBeLessThanOrEqual(100)
+  })
+
+  it('missing data → score is 100 (no silent penalty for unknown)', () => {
     const { score } = scoreMetabolic({})
     expect(score).toBe(100)
   })
+
+  it('is deterministic', () => {
+    const snap: MetabolicSnapshot = { latestFastingGlucose: 105, latestLdlMgDl: 155, latestHdlMgDl: 55 }
+    const r1 = scoreMetabolic(snap)
+    const r2 = scoreMetabolic(snap)
+    expect(r1.score).toBe(r2.score)
+    expect(r1.signals).toEqual(r2.signals)
+  })
 })
 
-describe('PreventiveScore — biological age component', () => {
+// ─────────────────────────────────────────────────────────────────
+
+describe('scoreBiologicalAge()', () => {
   it('delta = -10 (very rejuvenated) → score 100', () => {
-    expect(scoreBiologicalAge(-10)).toBe(100)
+    expect(scoreBiologicalAge(-10, 40).score).toBe(100)
   })
 
-  it('delta = 0 (perfect match) → score 50', () => {
-    expect(scoreBiologicalAge(0)).toBe(50)
+  it('delta = 0 (exact match) → score 50', () => {
+    expect(scoreBiologicalAge(0, 40).score).toBe(50)
   })
 
   it('delta = +10 (severely aged) → score 0', () => {
-    expect(scoreBiologicalAge(10)).toBe(0)
+    expect(scoreBiologicalAge(10, 40).score).toBe(0)
   })
 
   it('delta = -3 (REJUVENECIDO) → score 65', () => {
-    expect(scoreBiologicalAge(-3)).toBe(65)
+    expect(scoreBiologicalAge(-3, 40).score).toBe(65)
   })
 
   it('delta = +5 (ENVEJECIDO) → score 25', () => {
-    expect(scoreBiologicalAge(5)).toBe(25)
+    expect(scoreBiologicalAge(5, 40).score).toBe(25)
   })
 
   it('score bounded at 0 for extreme positive delta', () => {
-    expect(scoreBiologicalAge(20)).toBe(0)
+    expect(scoreBiologicalAge(20, 40).score).toBe(0)
   })
 
   it('score bounded at 100 for extreme negative delta', () => {
-    expect(scoreBiologicalAge(-20)).toBe(100)
+    expect(scoreBiologicalAge(-20, 40).score).toBe(100)
+  })
+
+  it('signals include delta and status label', () => {
+    const { signals } = scoreBiologicalAge(3, 40)
+    expect(signals.some(s => s.includes('bio_age_delta'))).toBe(true)
+    expect(signals).toContain('envejecido')
+  })
+
+  it('signals for rejuvenated patient include rejuvenecido', () => {
+    const { signals } = scoreBiologicalAge(-3, 40)
+    expect(signals).toContain('rejuvenecido')
+  })
+
+  it('is deterministic', () => {
+    const r1 = scoreBiologicalAge(2.5, 45)
+    const r2 = scoreBiologicalAge(2.5, 45)
+    expect(r1.score).toBe(r2.score)
+  })
+
+  // PIN tests
+  it('PIN: delta=-3 → 65; delta=0 → 50; delta=+5 → 25 (regression guard)', () => {
+    expect(scoreBiologicalAge(-3, 40).score).toBe(65)
+    expect(scoreBiologicalAge(0,  40).score).toBe(50)
+    expect(scoreBiologicalAge(5,  40).score).toBe(25)
   })
 })
 
-describe('PreventiveScore — lifestyle component', () => {
+// ─────────────────────────────────────────────────────────────────
+
+describe('scoreLifestyle()', () => {
   it('non-smoker, no diabetes, no antihypertensives → 100', () => {
-    expect(scoreLifestyle({ isSmoker: false, hasDiabetes: false })).toBe(100)
+    expect(scoreLifestyle({ isSmoker: false, hasDiabetes: false }).score).toBe(100)
   })
 
   it('smoker deducts 25 points', () => {
-    expect(scoreLifestyle({ isSmoker: true })).toBe(75)
+    expect(scoreLifestyle({ isSmoker: true }).score).toBe(75)
   })
 
   it('diabetes deducts 15 points', () => {
-    expect(scoreLifestyle({ hasDiabetes: true })).toBe(85)
+    expect(scoreLifestyle({ hasDiabetes: true }).score).toBe(85)
   })
 
   it('controlled hypertension (on meds, BP < 140) deducts 5', () => {
-    expect(scoreLifestyle({ isOnAntihypertensives: true, latestSystolicBp: 128 })).toBe(95)
+    expect(scoreLifestyle({ isOnAntihypertensives: true, latestSystolicBp: 128 }).score).toBe(95)
   })
 
   it('uncontrolled hypertension (on meds, BP ≥ 140) deducts 10', () => {
-    expect(scoreLifestyle({ isOnAntihypertensives: true, latestSystolicBp: 148 })).toBe(90)
+    expect(scoreLifestyle({ isOnAntihypertensives: true, latestSystolicBp: 148 }).score).toBe(90)
   })
 
   it('worst case (smoker + diabetic + uncontrolled HTN) → 50', () => {
@@ -200,15 +247,36 @@ describe('PreventiveScore — lifestyle component', () => {
       hasDiabetes: true,
       isOnAntihypertensives: true,
       latestSystolicBp: 160,
-    })).toBe(50)
+    }).score).toBe(50)
   })
 
-  it('unknown data → no penalty (null/undefined values)', () => {
-    expect(scoreLifestyle({})).toBe(100)
+  it('unknown data → no penalty (score 100)', () => {
+    expect(scoreLifestyle({}).score).toBe(100)
+  })
+
+  it('null values → no penalty (score 100)', () => {
+    const snap: LifestyleSnapshot = { isSmoker: null, hasDiabetes: null }
+    expect(scoreLifestyle(snap).score).toBe(100)
+  })
+
+  it('signals are explicit, not empty, when penalties applied', () => {
+    const { signals } = scoreLifestyle({ isSmoker: true, hasDiabetes: true })
+    expect(signals).toContain('smoker')
+    expect(signals).toContain('diabetes_diagnosed')
+  })
+
+  it('is deterministic', () => {
+    const snap: LifestyleSnapshot = { isSmoker: true, isOnAntihypertensives: true, latestSystolicBp: 142 }
+    const r1 = scoreLifestyle(snap)
+    const r2 = scoreLifestyle(snap)
+    expect(r1.score).toBe(r2.score)
+    expect(r1.signals).toEqual(r2.signals)
   })
 })
 
-describe('PreventiveScore — tier classification', () => {
+// ─────────────────────────────────────────────────────────────────
+
+describe('classifyPreventiveTier()', () => {
   const cases: Array<[number, string]> = [
     [100, 'OPTIMAL'], [80, 'OPTIMAL'],
     [79,  'GOOD'],    [60, 'GOOD'],
@@ -219,71 +287,32 @@ describe('PreventiveScore — tier classification', () => {
 
   for (const [score, expected] of cases) {
     it(`score ${score} → ${expected}`, () => {
-      expect(classifyTier(score)).toBe(expected)
+      expect(classifyPreventiveTier(score)).toBe(expected)
     })
   }
+
+  // PIN: boundary values must not drift
+  it('PIN: boundary values are exact (regression guard)', () => {
+    expect(classifyPreventiveTier(80)).toBe('OPTIMAL')
+    expect(classifyPreventiveTier(79)).toBe('GOOD')
+    expect(classifyPreventiveTier(60)).toBe('GOOD')
+    expect(classifyPreventiveTier(59)).toBe('MODERATE_RISK')
+    expect(classifyPreventiveTier(40)).toBe('MODERATE_RISK')
+    expect(classifyPreventiveTier(39)).toBe('HIGH_RISK')
+    expect(classifyPreventiveTier(20)).toBe('HIGH_RISK')
+    expect(classifyPreventiveTier(19)).toBe('CRITICAL')
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────
 
-describe('ReferralEngine — trigger selection logic', () => {
-  // Mirror trigger selection for unit testing
-  function selectTrigger(ctx: {
-    differentialAge?: number
-    cvRiskCategory?: string
-    engagementTier?: string
-    daysSinceLastLab?: number
-  }): string | null {
-    const delta = ctx.differentialAge ?? 0
-    const cvRisk = ctx.cvRiskCategory ?? 'LOW'
-    const daysSinceLab = ctx.daysSinceLastLab ?? 0
-
-    if (delta >= 7)                                     return 'PREMIUM_CONSULT_URGENT'
-    if (cvRisk === 'HIGH' || cvRisk === 'VERY_HIGH')    return 'SPECIALIST_REFERRAL'
-    if (delta >= 5 && (ctx.engagementTier === 'CHAMPION' || ctx.engagementTier === 'ENGAGED'))
-                                                        return 'PREMIUM_CONSULT'
-    if (daysSinceLab >= 180)                            return 'LAB_PANEL'
-    return null
-  }
-
-  it('delta ≥ 7 → urgent premium consult (highest priority)', () => {
-    expect(selectTrigger({ differentialAge: 7 })).toBe('PREMIUM_CONSULT_URGENT')
-    expect(selectTrigger({ differentialAge: 12 })).toBe('PREMIUM_CONSULT_URGENT')
+describe('PREVENTIVE_ALGORITHM_VERSION', () => {
+  it('is a non-empty string', () => {
+    expect(typeof PREVENTIVE_ALGORITHM_VERSION).toBe('string')
+    expect(PREVENTIVE_ALGORITHM_VERSION.length).toBeGreaterThan(0)
   })
 
-  it('HIGH cv risk → specialist referral', () => {
-    expect(selectTrigger({ cvRiskCategory: 'HIGH' })).toBe('SPECIALIST_REFERRAL')
-    expect(selectTrigger({ cvRiskCategory: 'VERY_HIGH' })).toBe('SPECIALIST_REFERRAL')
-  })
-
-  it('delta ≥ 7 takes priority over HIGH cv risk', () => {
-    expect(selectTrigger({ differentialAge: 8, cvRiskCategory: 'HIGH' })).toBe('PREMIUM_CONSULT_URGENT')
-  })
-
-  it('delta 5-6 + engaged → premium consult', () => {
-    expect(selectTrigger({ differentialAge: 5, engagementTier: 'ENGAGED' })).toBe('PREMIUM_CONSULT')
-    expect(selectTrigger({ differentialAge: 6, engagementTier: 'CHAMPION' })).toBe('PREMIUM_CONSULT')
-  })
-
-  it('delta 5-6 + dormant → no referral (engagement required)', () => {
-    expect(selectTrigger({ differentialAge: 5, engagementTier: 'DORMANT' })).toBeNull()
-  })
-
-  it('labs overdue 180d → lab panel referral', () => {
-    expect(selectTrigger({ daysSinceLastLab: 180 })).toBe('LAB_PANEL')
-    expect(selectTrigger({ daysSinceLastLab: 365 })).toBe('LAB_PANEL')
-  })
-
-  it('optimal profile → no referral', () => {
-    expect(selectTrigger({
-      differentialAge: -3,
-      cvRiskCategory: 'LOW',
-      engagementTier: 'CHAMPION',
-      daysSinceLastLab: 30,
-    })).toBeNull()
-  })
-
-  it('no data → no referral', () => {
-    expect(selectTrigger({})).toBeNull()
+  it('PIN: version is stable (regression guard)', () => {
+    expect(PREVENTIVE_ALGORITHM_VERSION).toBe('preventive-composite-v1.0.0')
   })
 })

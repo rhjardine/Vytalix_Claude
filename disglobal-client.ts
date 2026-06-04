@@ -9,7 +9,7 @@
 //   - Batch onboarding for marketplace user segments
 //
 // Usage in Disglobal's backend:
-//   import { DisggloalVytalixClient } from '@vytalix/disglobal-sdk'
+//   import { DisgglobalVytalixClient } from '@vytalix/disglobal-sdk'
 //   const client = new DisgglobalVytalixClient({ apiKey: process.env.VYX_API_KEY })
 //   const result = await client.assessBioAge(userId, measurements)
 // =============================================================================
@@ -92,9 +92,10 @@ export class DisgglobalVytalixClient {
 
   // ── Core: Evaluate biological age ────────────────────────────────
 
-  async assessBioAge(input: DisgglobalBioAgeInput): Promise<DisgglobalBioAgeResult> {
+  async assessBioAge(input: DisgglobalBioAgeInput, correlationId?: string): Promise<DisgglobalBioAgeResult> {
     const subjectRef  = this.pseudonymize(input.userId)
     const idempotency = `disg-${subjectRef}-${Date.now()}`
+    const cid         = correlationId ?? crypto.randomUUID()
 
     const body = {
       subjectRef,
@@ -121,12 +122,12 @@ export class DisgglobalVytalixClient {
       },
     }
 
-    const data = await this.post('/api/v2/vitality/assess', body, idempotency)
+    const data = await this.post('/api/v2/vitality/assess', body, idempotency, cid)
 
     // Also fetch referral CTA
     let cta: DisgglobalCTA | undefined
     try {
-      const referral = await this.get(`/api/v2/referral/${subjectRef}`)
+      const referral = await this.get(`/api/v2/referral/${subjectRef}`, cid)
       if (referral.eligible) {
         cta = {
           elegible:         true,
@@ -164,13 +165,13 @@ export class DisgglobalVytalixClient {
 
   // ── Register engagement event ─────────────────────────────────────
 
-  async trackEvent(userId: string, eventType: string, payload: Record<string, unknown> = {}): Promise<void> {
+  async trackEvent(userId: string, eventType: string, payload: Record<string, unknown> = {}, correlationId?: string): Promise<void> {
     const subjectRef = this.pseudonymize(userId)
     await this.post('/api/v2/engagement/events', {
       subjectRef,
       events: [{ type: eventType, payload }],
       source: 'disglobal_marketplace',
-    })
+    }, undefined, correlationId)
   }
 
   // ── Track CTA click (conversion funnel) ───────────────────────────
@@ -222,7 +223,30 @@ export class DisgglobalVytalixClient {
     return { processed, failed, withReferral }
   }
 
-  // ── Private helpers ───────────────────────────────────────────────
+  // ── Connectivity check (use before starting a batch or pilot session) ─────
+
+  /**
+   * Checks connectivity to the Vytalix platform.
+   * Call this before starting a batch assessment session.
+   * Returns { ready: true } if the platform is up, throws otherwise.
+   */
+  async checkConnectivity(): Promise<{ ready: boolean; status: string; version?: string; checks?: Record<string, unknown> }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/readiness`, {
+        headers: { 'X-API-Key': this.apiKey, 'X-Correlation-ID': crypto.randomUUID() },
+        signal:  AbortSignal.timeout(5_000),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        return { ready: false, status: body.status ?? 'not_ready', checks: body.checks }
+      }
+      return { ready: true, status: body.status ?? 'ready', version: body.version, checks: body.checks }
+    } catch (err: any) {
+      return { ready: false, status: 'unreachable' }
+    }
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────
 
   /**
    * Pseudonymizes a Disglobal userId → Vytalix subjectRef.
@@ -243,10 +267,11 @@ export class DisgglobalVytalixClient {
     return 'PRONTO'
   }
 
-  private async post(path: string, body: unknown, idempotencyKey?: string): Promise<any> {
+  private async post(path: string, body: unknown, idempotencyKey?: string, correlationId?: string): Promise<any> {
     const headers: Record<string, string> = {
-      'Content-Type':  'application/json',
-      'X-API-Key':     this.apiKey,
+      'Content-Type':    'application/json',
+      'X-API-Key':       this.apiKey,
+      'X-Correlation-ID': correlationId ?? crypto.randomUUID(),
     }
     if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey
 
@@ -265,9 +290,12 @@ export class DisgglobalVytalixClient {
     return res.json()
   }
 
-  private async get(path: string): Promise<any> {
+  private async get(path: string, correlationId?: string): Promise<any> {
     const res = await fetch(`${this.baseUrl}${path}`, {
-      headers:  { 'X-API-Key': this.apiKey },
+      headers:  {
+        'X-API-Key':        this.apiKey,
+        'X-Correlation-ID': correlationId ?? crypto.randomUUID(),
+      },
       signal:   AbortSignal.timeout(this.timeout),
     })
     if (!res.ok) {

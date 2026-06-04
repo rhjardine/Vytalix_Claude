@@ -1,6 +1,8 @@
 // =============================================================================
-// PreventiveScoreService
-// Composite preventive health score (0–100, higher = healthier).
+// PreventiveScoreService — Composite preventive health score (0–100).
+//
+// Pure functions are exported separately for direct unit testing.
+// The class composes them, adds persistence and caching.
 //
 // Components:
 //   1. cardiovascular (30%) — inverted Framingham 10yr risk
@@ -13,9 +15,9 @@
 // DecisionEngine; this score does not trigger autonomous actions.
 // =============================================================================
 
-import { withTenant } from '../lib/db'
-import { logger } from '../lib/logger'
-import { getRedisClient } from '../lib/redis'
+import { withTenant } from './db'
+import { logger } from './logger'
+import { getRedisClient } from './redis'
 
 export interface PreventiveScoreResult {
   scoreId: string
@@ -28,21 +30,156 @@ export interface PreventiveScoreResult {
     lifestyle?: ComponentScore
   }
   insufficientData: string[]
-  computedAt: Date
+  /** Exact inputs used to produce this result — stored for longitudinal replay. */
+  inputSnapshot: {
+    snapshot: Record<string, unknown> | null
+    riskScore: Record<string, unknown> | null
+    bioAge: Record<string, unknown> | null
+  }
   algorithmVersion: string
+  computedAt: Date
 }
 
-interface ComponentScore {
+export interface ComponentScore {
   score: number
   weight: number
   signals: string[]
 }
 
-type ScoreTier = 'OPTIMAL' | 'GOOD' | 'MODERATE_RISK' | 'HIGH_RISK' | 'CRITICAL'
+export type ScoreTier = 'OPTIMAL' | 'GOOD' | 'MODERATE_RISK' | 'HIGH_RISK' | 'CRITICAL'
 
-const ALGORITHM_VERSION = 'preventive-composite-v1.0.0'
+export interface MetabolicSnapshot {
+  latestFastingGlucose?: number | null
+  latestTotalCholesterol?: number | null
+  latestHdlMgDl?: number | null
+  latestLdlMgDl?: number | null
+}
+
+export interface LifestyleSnapshot {
+  isSmoker?: boolean | null
+  hasDiabetes?: boolean | null
+  isOnAntihypertensives?: boolean | null
+  latestSystolicBp?: number | null
+}
+
+export const PREVENTIVE_ALGORITHM_VERSION = 'preventive-composite-v1.0.0'
+
 const CACHE_TTL = 4 * 60 * 60 // 4h
 
+// ─────────────────────────────────────────────────────────────────
+// Pure functions — exported for direct testing. No I/O, no side effects.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Scores the cardiovascular component.
+ * Inverts 10-year Framingham risk: 0% risk → 100, ≥30% risk → 0.
+ */
+export function scoreCardiovascular(
+  tenYearRiskPct: number,
+  category: string
+): Omit<ComponentScore, 'weight'> {
+  const score = Math.max(0, Math.round(100 - (tenYearRiskPct / 30) * 100))
+  const signals: string[] = [
+    `10yr_cvd_risk_${tenYearRiskPct.toFixed(1)}pct`,
+    `category_${category.toLowerCase()}`,
+  ]
+  return { score, signals }
+}
+
+/**
+ * Scores the metabolic component based on glucose, LDL, HDL, TC/HDL ratio.
+ * Penalties are additive; HDL ≥60 grants a +5 bonus.
+ * Score is clamped to [0, 100].
+ */
+export function scoreMetabolic(snapshot: MetabolicSnapshot): Omit<ComponentScore, 'weight'> {
+  let score = 100
+  const signals: string[] = []
+
+  const glucose = Number(snapshot.latestFastingGlucose) || 0
+  const tc      = Number(snapshot.latestTotalCholesterol) || 0
+  const hdl     = Number(snapshot.latestHdlMgDl) || 0
+  const ldl     = Number(snapshot.latestLdlMgDl) || 0
+
+  if (glucose) {
+    if (glucose >= 126)       { score -= 30; signals.push('glucose_diabetic_range') }
+    else if (glucose >= 100)  { score -= 15; signals.push('glucose_prediabetes') }
+    else                      { signals.push('glucose_normal') }
+  }
+
+  if (ldl) {
+    if (ldl >= 190)           { score -= 25; signals.push('ldl_severely_elevated') }
+    else if (ldl >= 160)      { score -= 15; signals.push('ldl_elevated') }
+    else if (ldl >= 130)      { score -= 5;  signals.push('ldl_borderline') }
+    else                      { signals.push('ldl_optimal') }
+  }
+
+  if (hdl) {
+    if (hdl < 40)             { score -= 10; signals.push('hdl_low') }
+    else if (hdl >= 60)       { score += 5;  signals.push('hdl_protective') }
+  }
+
+  if (tc && hdl) {
+    const ratio = tc / hdl
+    if (ratio > 5)            { score -= 10; signals.push('tc_hdl_ratio_high') }
+  }
+
+  return { score: Math.max(0, Math.min(100, score)), signals }
+}
+
+/**
+ * Scores the biological age component.
+ * Maps differential age [-10, +10] to score [100, 0].
+ * delta -10 = score 100 (very rejuvenated), delta +10 = score 0.
+ */
+export function scoreBiologicalAge(
+  differentialAge: number,
+  _chronoAge: number
+): Omit<ComponentScore, 'weight'> {
+  const score = Math.max(0, Math.min(100, Math.round(50 - differentialAge * 5)))
+  const signals: string[] = [
+    `bio_age_delta_${differentialAge > 0 ? '+' : ''}${differentialAge.toFixed(1)}yr`,
+    differentialAge <= -2 ? 'rejuvenecido' : differentialAge >= 2 ? 'envejecido' : 'normal',
+  ]
+  return { score, signals }
+}
+
+/**
+ * Scores the lifestyle component.
+ * Smoking -25, diabetes -15, uncontrolled HTN -10, managed HTN -5.
+ * No penalty for unknown/null values (never silently penalize missing data).
+ */
+export function scoreLifestyle(snapshot: LifestyleSnapshot): Omit<ComponentScore, 'weight'> {
+  let score = 100
+  const signals: string[] = []
+
+  if (snapshot.isSmoker === true)           { score -= 25; signals.push('smoker') }
+  else if (snapshot.isSmoker === false)     { signals.push('non_smoker') }
+
+  if (snapshot.hasDiabetes === true)        { score -= 15; signals.push('diabetes_diagnosed') }
+
+  if (snapshot.isOnAntihypertensives === true) {
+    const systolic = Number(snapshot.latestSystolicBp) || 0
+    if (systolic >= 140) { score -= 10; signals.push('hypertension_uncontrolled') }
+    else                 { score -= 5;  signals.push('hypertension_managed') }
+  }
+
+  return { score: Math.max(0, score), signals }
+}
+
+/**
+ * Classifies composite score into clinical tier.
+ * Thresholds: ≥80 OPTIMAL, ≥60 GOOD, ≥40 MODERATE_RISK, ≥20 HIGH_RISK, else CRITICAL.
+ */
+export function classifyPreventiveTier(score: number): ScoreTier {
+  if (score >= 80) return 'OPTIMAL'
+  if (score >= 60) return 'GOOD'
+  if (score >= 40) return 'MODERATE_RISK'
+  if (score >= 20) return 'HIGH_RISK'
+  return 'CRITICAL'
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PreventiveScoreService — Orchestrates pure functions + I/O
 // ─────────────────────────────────────────────────────────────────
 
 export class PreventiveScoreService {
@@ -91,7 +228,7 @@ export class PreventiveScoreService {
 
     // ── Component 1: Cardiovascular (30%) ─────────────────────────
     if (riskScore) {
-      const cvComponent = this.scoreCardiovascular(riskScore.valuePercent, riskScore.riskCategory)
+      const cvComponent = scoreCardiovascular(riskScore.valuePercent as number, riskScore.riskCategory as string)
       components.cardiovascular = { ...cvComponent, weight: 0.30 }
       totalWeightedScore += cvComponent.score * 0.30
       totalWeight += 0.30
@@ -101,7 +238,7 @@ export class PreventiveScoreService {
 
     // ── Component 2: Metabolic (25%) ──────────────────────────────
     if (snapshot?.latestFastingGlucose || snapshot?.latestTotalCholesterol) {
-      const metComponent = this.scoreMetabolic(snapshot)
+      const metComponent = scoreMetabolic(snapshot as MetabolicSnapshot)
       components.metabolic = { ...metComponent, weight: 0.25 }
       totalWeightedScore += metComponent.score * 0.25
       totalWeight += 0.25
@@ -111,9 +248,9 @@ export class PreventiveScoreService {
 
     // ── Component 3: Biological Age (25%) ─────────────────────────
     if (bioAge && snapshot?.ageAtSnapshot) {
-      const bioComponent = this.scoreBiologicalAge(
-        bioAge.differentialAge,
-        snapshot.ageAtSnapshot
+      const bioComponent = scoreBiologicalAge(
+        bioAge.differentialAge as number,
+        snapshot.ageAtSnapshot as number
       )
       components.biologicalAge = { ...bioComponent, weight: 0.25 }
       totalWeightedScore += bioComponent.score * 0.25
@@ -124,7 +261,7 @@ export class PreventiveScoreService {
 
     // ── Component 4: Lifestyle (20%) ──────────────────────────────
     if (snapshot) {
-      const lifestyleComponent = this.scoreLifestyle(snapshot)
+      const lifestyleComponent = scoreLifestyle(snapshot as LifestyleSnapshot)
       components.lifestyle = { ...lifestyleComponent, weight: 0.20 }
       totalWeightedScore += lifestyleComponent.score * 0.20
       totalWeight += 0.20
@@ -132,23 +269,26 @@ export class PreventiveScoreService {
 
     // Need at least 2 components to produce a meaningful score
     if (totalWeight < 0.40) {
-      log.warn({ totalWeight }, 'Insufficient data for composite score')
+      log.warn({ totalWeight, insufficientData }, 'Insufficient data for composite score — returning null')
       return null
     }
 
     // Normalize to available weight (partial score when some components missing)
     const compositeScore = Math.round(totalWeightedScore / totalWeight)
-    const scoreTier = this.classifyTier(compositeScore)
+    const scoreTier      = classifyPreventiveTier(compositeScore)
 
     const inputSnapshot = { snapshot, riskScore, bioAge }
 
     // Persist
     const scoreId = await this.persist(tenantId, patientId, compositeScore, scoreTier, components, inputSnapshot)
 
-    // Cache
+    // Cache (non-fatal)
     await this.cache(tenantId, patientId, compositeScore)
 
-    log.info({ compositeScore, scoreTier, componentsCount: Object.keys(components).length }, 'Preventive score computed')
+    log.info(
+      { compositeScore, scoreTier, componentsCount: Object.keys(components).length, insufficientData },
+      'Preventive score computed'
+    )
 
     return {
       scoreId,
@@ -156,83 +296,10 @@ export class PreventiveScoreService {
       scoreTier,
       components,
       insufficientData,
+      inputSnapshot: inputSnapshot as PreventiveScoreResult['inputSnapshot'],
+      algorithmVersion: PREVENTIVE_ALGORITHM_VERSION,
       computedAt: new Date(),
-      algorithmVersion: ALGORITHM_VERSION,
     }
-  }
-
-  // ── Component scorers ─────────────────────────────────────────────
-
-  private scoreCardiovascular(tenYearRiskPct: number, category: string): Omit<ComponentScore, 'weight'> {
-    // Invert: 0% risk = 100 score, 30%+ risk = 0 score
-    const score = Math.max(0, Math.round(100 - (tenYearRiskPct / 30) * 100))
-    const signals: string[] = [`10yr_cvd_risk_${tenYearRiskPct.toFixed(1)}pct`, `category_${category.toLowerCase()}`]
-    return { score, signals }
-  }
-
-  private scoreMetabolic(snapshot: Record<string, any>): Omit<ComponentScore, 'weight'> {
-    let score = 100
-    const signals: string[] = []
-
-    const glucose = Number(snapshot.latestFastingGlucose)
-    const tc      = Number(snapshot.latestTotalCholesterol)
-    const hdl     = Number(snapshot.latestHdlMgDl)
-    const ldl     = Number(snapshot.latestLdlMgDl)
-
-    if (glucose) {
-      if (glucose >= 126)       { score -= 30; signals.push('glucose_diabetic_range') }
-      else if (glucose >= 100)  { score -= 15; signals.push('glucose_prediabetes') }
-      else                      { signals.push('glucose_normal') }
-    }
-
-    if (ldl) {
-      if (ldl >= 190)           { score -= 25; signals.push('ldl_severely_elevated') }
-      else if (ldl >= 160)      { score -= 15; signals.push('ldl_elevated') }
-      else if (ldl >= 130)      { score -= 5;  signals.push('ldl_borderline') }
-      else                      { signals.push('ldl_optimal') }
-    }
-
-    if (hdl) {
-      if (hdl < 40)             { score -= 10; signals.push('hdl_low') }
-      else if (hdl >= 60)       { score += 5;  signals.push('hdl_protective') } // bonus
-    }
-
-    if (tc && hdl) {
-      const ratio = tc / hdl
-      if (ratio > 5)            { score -= 10; signals.push('tc_hdl_ratio_high') }
-    }
-
-    return { score: Math.max(0, Math.min(100, score)), signals }
-  }
-
-  private scoreBiologicalAge(differentialAge: number, _chronoAge: number): Omit<ComponentScore, 'weight'> {
-    // -10 to +10 year range maps to 0–100
-    // delta -10 = score 100 (very rejuvenated), delta +10 = score 0
-    const score = Math.max(0, Math.min(100, Math.round(50 - differentialAge * 5)))
-    const signals: string[] = [
-      `bio_age_delta_${differentialAge > 0 ? '+' : ''}${differentialAge.toFixed(1)}yr`,
-      differentialAge <= -2 ? 'rejuvenecido' : differentialAge >= 2 ? 'envejecido' : 'normal',
-    ]
-    return { score, signals }
-  }
-
-  private scoreLifestyle(snapshot: Record<string, any>): Omit<ComponentScore, 'weight'> {
-    let score = 100
-    const signals: string[] = []
-
-    if (snapshot.isSmoker === true)            { score -= 25; signals.push('smoker') }
-    else if (snapshot.isSmoker === false)      { signals.push('non_smoker') }
-
-    if (snapshot.hasDiabetes === true)         { score -= 15; signals.push('diabetes_diagnosed') }
-
-    if (snapshot.isOnAntihypertensives === true) {
-      // On meds = managed (positive signal vs. unmanaged hypertension)
-      const systolic = Number(snapshot.latestSystolicBp)
-      if (systolic >= 140) { score -= 10; signals.push('hypertension_uncontrolled') }
-      else                 { score -= 5;  signals.push('hypertension_managed') }
-    }
-
-    return { score: Math.max(0, score), signals }
   }
 
   // ── Persistence ────────────────────────────────────────────────────
@@ -265,25 +332,17 @@ export class PreventiveScoreService {
           components.biologicalAge?.score ?? null,
           components.lifestyle?.score ?? null,
           JSON.stringify(inputSnapshot),
-          ALGORITHM_VERSION,
+          PREVENTIVE_ALGORITHM_VERSION,
         ]
       )
     )
-    return row.id
+    return (row as { id: string }).id
   }
 
   private async cache(tenantId: string, patientId: string, score: number) {
     try {
       const redis = getRedisClient()
       await redis.setex(`preventive:${tenantId}:${patientId}:score`, CACHE_TTL, String(score))
-    } catch (_) { /* non-fatal */ }
-  }
-
-  private classifyTier(score: number): ScoreTier {
-    if (score >= 80) return 'OPTIMAL'
-    if (score >= 60) return 'GOOD'
-    if (score >= 40) return 'MODERATE_RISK'
-    if (score >= 20) return 'HIGH_RISK'
-    return 'CRITICAL'
+    } catch (_) { /* non-fatal — cache miss is acceptable */ }
   }
 }

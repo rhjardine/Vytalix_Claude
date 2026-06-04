@@ -9,10 +9,17 @@ import helmet  from 'helmet'
 import cors    from 'cors'
 import crypto  from 'node:crypto'
 
-import { logger }          from './lib/logger'
-import { checkDbHealth }   from './lib/db'
-import { checkRedisHealth } from './lib/redis'
+import { logger }            from './lib/logger'
+import { checkDbHealth }     from './lib/db'
+import { checkRedisHealth }  from './lib/redis'
 import { flushMeterStream }  from './billing/metering.service'
+import {
+  healthHandler,
+  livenessHandler,
+  readinessHandler,
+  metricsHandler,
+  metricsMiddleware,
+} from './observability.handler'
 
 // ── Routers ───────────────────────────────────────────────────────
 import { createExternalV2Router }        from './api/external-v2.handler'
@@ -46,11 +53,17 @@ app.use(cors({
 app.use(express.json({ limit: '2mb' }))
 app.use(express.urlencoded({ extended: true, limit: '2mb' }))
 
-// ── Correlation ID on every request ──────────────────────────────
-app.use((req, _res, next) => {
-  ;(req as any).correlationId = (req.headers['x-correlation-id'] as string) || crypto.randomUUID()
+// ── Correlation ID on every request ─────────────────────────────
+// Generate or forward X-Correlation-ID; always echo it in the response.
+app.use((req, res, next) => {
+  const cid = (req.headers['x-correlation-id'] as string) || crypto.randomUUID()
+  ;(req as any).correlationId = cid
+  res.setHeader('X-Correlation-ID', cid)
   next()
 })
+
+// ── Operational metrics (must come before routes) ─────────────────
+app.use(metricsMiddleware)
 
 // ── Request logger ────────────────────────────────────────────────
 app.use((req, res, next) => {
@@ -65,22 +78,15 @@ app.use((req, res, next) => {
   next()
 })
 
-// ── Health & Observability (public) ──────────────────────────────
-app.get('/health', async (_req, res) => {
-  const [db, redis] = await Promise.all([checkDbHealth(), checkRedisHealth()])
-  const status = db && redis ? 'ok' : 'degraded'
-  res.status(status === 'ok' ? 200 : 503).json({
-    status,
-    version:   process.env.npm_package_version ?? '0.9.0',
-    timestamp: new Date().toISOString(),
-    checks:    { database: db ? 'ok' : 'error', redis: redis ? 'ok' : 'degraded' },
-  })
-})
-
-app.get('/metrics', (_req, res) => {
-  // In Fase 4: export Prometheus metrics
-  res.json({ note: 'Prometheus endpoint — Phase 4', uptime: process.uptime() })
-})
+// ── Observability endpoints (public, no auth) ────────────────────
+// /liveness  — lightweight probe, no I/O (k8s livenessProbe)
+// /readiness — DB + Redis check (k8s readinessProbe, Disglobal batch guard)
+// /health    — alias for /readiness (Docker HEALTHCHECK, legacy)
+// /metrics   — operational JSON metrics for dashboards
+app.get('/liveness',  livenessHandler)
+app.get('/readiness', readinessHandler)
+app.get('/health',    healthHandler)
+app.get('/metrics',   metricsHandler)
 
 // ── Public Funnel API (no auth) ───────────────────────────────────
 app.use('/api/funnel',        createFunnelRouter())
@@ -121,18 +127,25 @@ app.listen(PORT, () => {
   logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, '🚀 Vytalix Platform started')
   logger.info({
     routes: [
-      'GET  /health', 'GET  /metrics',
+      // Observability (public)
+      'GET  /liveness',
+      'GET  /readiness',
+      'GET  /health    (alias → /readiness)',
+      'GET  /metrics',
+      // Funnel API (public)
       'POST /api/funnel/leads',
       'POST /api/funnel/vitality-assessment',
       'POST /api/funnel/facial-analysis (stub)',
       'POST /api/funnel/booking',
       'GET  /api/exchange-rate',
+      // External API v2 (API Key — Disglobal + partners)
       'POST /api/v2/vitality/assess',
       'GET  /api/v2/vitality/:subjectRef',
       'POST /api/v2/preventive/score',
       'GET  /api/v2/referral/:subjectRef',
       'POST /api/v2/engagement/events',
       'GET  /api/v2/insights/cohort',
+      // Admin API (JWT — internal only)
       'POST /admin/tenants/:id/api-keys',
       'GET  /admin/tenants/:id/usage',
     ]
