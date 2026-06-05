@@ -15,9 +15,26 @@
 // =============================================================================
 
 import { Request, Response } from 'express'
-import { logger } from './logger'
-import { getDb } from './db'
-import { getRedisClient } from './redis'
+import { logger } from './lib/logger'
+import { getDb } from './lib/db'
+import { getRedisClient } from './lib/redis'
+import * as promClient from 'prom-client'
+
+// ── Prometheus setup ──────────────────────────────────────────────
+promClient.collectDefaultMetrics({ prefix: 'vytalix_' })
+
+export const httpRequestsTotal = new promClient.Counter({
+  name: 'vytalix_http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+})
+
+export const httpRequestDurationMicroseconds = new promClient.Histogram({
+  name: 'vytalix_http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.05, 0.1, 0.2, 0.5, 1, 2, 5],
+})
 
 const SERVICE_START_MS = Date.now()
 
@@ -199,14 +216,34 @@ export async function metricsHandler(req: Request, res: Response): Promise<void>
 }
 
 // ─────────────────────────────────────────────────────────────────
+// GET /metrics/prometheus
+// Prometheus metrics export endpoint
+// ─────────────────────────────────────────────────────────────────
+
+export async function prometheusHandler(req: Request, res: Response): Promise<void> {
+  try {
+    res.set('Content-Type', promClient.register.contentType)
+    res.end(await promClient.register.metrics())
+  } catch (ex) {
+    res.status(500).end(String(ex))
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Metrics middleware — attach to app.use() before routes
 // Records latency + error status for every request.
 // ─────────────────────────────────────────────────────────────────
 
 export function metricsMiddleware(req: any, res: any, next: any): void {
   const start = Date.now()
+  const endTimer = httpRequestDurationMicroseconds.startTimer()
   res.on('finish', () => {
-    metrics.record(Date.now() - start, res.statusCode >= 500)
+    const duration = Date.now() - start
+    metrics.record(duration, res.statusCode >= 500)
+    
+    const route = req.route ? req.route.path : req.path
+    httpRequestsTotal.inc({ method: req.method, route, status_code: res.statusCode })
+    endTimer({ method: req.method, route, status_code: res.statusCode })
   })
   next()
 }

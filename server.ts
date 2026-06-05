@@ -18,6 +18,7 @@ import {
   livenessHandler,
   readinessHandler,
   metricsHandler,
+  prometheusHandler,
   metricsMiddleware,
 } from './observability.handler'
 
@@ -87,6 +88,7 @@ app.get('/liveness',  livenessHandler)
 app.get('/readiness', readinessHandler)
 app.get('/health',    healthHandler)
 app.get('/metrics',   metricsHandler)
+app.get('/metrics/prometheus', prometheusHandler)
 
 // ── Public Funnel API (no auth) ───────────────────────────────────
 app.use('/api/funnel',        createFunnelRouter())
