@@ -1,24 +1,24 @@
 // =============================================================================
 // src/dental/dental-pricing.service.ts
-// CFE Dental — Patient-facing pricing with margin, financing and exchange rates
+// CFE Dental — Patient-facing pricing orchestration
 //
 // Responsibilities:
-//   - Apply margin on top of DentalCostEngine output
-//   - Generate patient-facing price quote
-//   - Compute financing options (monthly installments)
-//   - Support multi-currency pricing via exchange engine
+//   - Orchestrate CostEngine, MarginEngine, and ExchangeEngine.
+//   - Generate patient-facing price quotes.
+//   - Compute financing options (monthly installments).
+//   - Maintain purity (no persistence).
 // =============================================================================
 
 import { DentalCostEngine, CostEstimateInput, TreatmentCode } from './dental-cost.engine'
-import { getDb }    from '../platform/db'
-import { logger }   from '../platform/logger'
-import { z }        from 'zod'
+import { MarginEngine, MarginEngineInput } from './margin.engine'
+import { ExchangeEngine, ExchangeConversionInput } from './exchange.engine'
+import { z } from 'zod'
 
 // ── Input schema ──────────────────────────────────────────────────
 
 export const PriceQuoteSchema = z.object({
   tenantId:         z.string().uuid(),
-  patientRef:       z.string().max(100).optional(),  // pseudonymous
+  patientRef:       z.string().max(100).optional(),
   treatments: z.array(z.object({
     code:     z.string(),
     quantity: z.number().int().min(1).max(32).default(1),
@@ -26,9 +26,12 @@ export const PriceQuoteSchema = z.object({
   locationCode:     z.string().max(20).optional(),
   currency:         z.string().length(3).default('USD'),
   includeFinancing: z.boolean().default(true),
-  marginPct:        z.number().min(0.1).max(5.0).default(2.5),  // default 2.5x markup
-  chairRatePerHour: z.number().min(1).default(80),
-  overheadPct:      z.number().min(0).max(1).default(0.35),
+  
+  // Financial parameters
+  targetProfitMargin:  z.number().min(0.1).max(0.9).optional(), // Override dynamic margin
+  financialRiskFactor: z.number().min(1.0).max(2.0).default(1.0),
+  chairRatePerHour:    z.number().min(1).default(80),
+  overheadPct:         z.number().min(0).max(1).default(0.35),
 })
 
 export type PriceQuoteInput = z.infer<typeof PriceQuoteSchema>
@@ -55,9 +58,10 @@ export interface TreatmentLineItem {
   treatmentCode:  string
   treatmentName:  string
   quantity:       number
-  costUsd:        number        // internal cost
+  baseCostUsd:    number        // internal cost
+  suggestedMarginPct: number
   priceUsd:       number        // patient-facing price
-  margin:         number        // priceUsd / costUsd
+  netProfitUsd:   number        // expected profit
   sessions:       number
 }
 
@@ -67,11 +71,12 @@ export interface PriceQuoteResult {
   lineItems:       TreatmentLineItem[]
   subtotalUsd:     number
   totalUsd:        number
+  totalNetProfitUsd: number
   currency:        string
   totalInCurrency: number
   exchangeRate:    number
   financingOptions?: FinancingOption[]
-  validUntil:      string        // ISO — 30-day validity
+  validUntil:      string
   disclaimer:      string
   algorithmVersion: string
   generatedAt:     string
@@ -81,13 +86,17 @@ export interface PriceQuoteResult {
 
 export class DentalPricingService {
   private costEngine = new DentalCostEngine()
+  private marginEngine = new MarginEngine()
+  private exchangeEngine = new ExchangeEngine()
 
-  async generateQuote(input: PriceQuoteInput): Promise<PriceQuoteResult> {
-    const log = logger.child({ fn: 'DentalPricing.generateQuote', tenantId: input.tenantId })
-
-    // 1. Compute costs for all treatments
+  generateQuote(rawInput: PriceQuoteInput): PriceQuoteResult {
+    const input = PriceQuoteSchema.parse(rawInput)
     const lineItems: TreatmentLineItem[] = []
+    let totalBaseCostUsd = 0
+    let totalNetProfitUsd = 0
+    let totalUsd = 0
 
+    // 1. Compute costs and margins for all treatments
     for (const item of input.treatments) {
       const costInput: CostEstimateInput = {
         treatmentCode:    item.code as TreatmentCode,
@@ -97,35 +106,49 @@ export class DentalPricingService {
         overheadPct:      input.overheadPct,
       }
 
-      const cost  = this.costEngine.compute(costInput)
-      const price = round2(cost.adjustedTotalUsd * input.marginPct)
+      const cost = this.costEngine.compute(costInput)
+      
+      const marginInput: MarginEngineInput = {
+        costEstimate: cost,
+        financialRiskFactor: input.financialRiskFactor,
+        targetProfitMargin: input.targetProfitMargin,
+      }
+
+      const margin = this.marginEngine.compute(marginInput)
 
       lineItems.push({
         treatmentCode:  item.code,
         treatmentName:  cost.treatmentName,
         quantity:       item.quantity,
-        costUsd:        cost.adjustedTotalUsd,
-        priceUsd:       price,
-        margin:         input.marginPct,
+        baseCostUsd:    margin.baseCostUsd,
+        suggestedMarginPct: margin.suggestedMarginPct,
+        priceUsd:       margin.suggestedPriceUsd,
+        netProfitUsd:   margin.netProfitUsd,
         sessions:       cost.estimatedSessions,
       })
+
+      totalBaseCostUsd += margin.baseCostUsd
+      totalNetProfitUsd += margin.netProfitUsd
+      totalUsd += margin.suggestedPriceUsd
     }
 
-    const subtotalUsd = round2(lineItems.reduce((s, l) => s + l.priceUsd, 0))
-    const totalUsd    = subtotalUsd  // extensions: discounts, taxes
+    const subtotalUsd = round2(totalUsd)
+    totalUsd = subtotalUsd
 
     // 2. Currency conversion
-    const { rate, totalInCurrency } = await convertCurrency(totalUsd, input.currency)
+    const conversion = this.exchangeEngine.convert({
+      amount: totalUsd,
+      baseCurrency: 'USD',
+      targetCurrency: input.currency
+    })
 
     // 3. Financing options
     const financing = input.includeFinancing
-      ? computeFinancing(totalInCurrency)
+      ? computeFinancing(conversion.convertedAmount)
       : undefined
 
     const validUntil = new Date(Date.now() + 30 * 24 * 3600_000).toISOString()
     const quoteId    = `QT-${Date.now().toString(36).toUpperCase()}`
-
-    log.info({ quoteId, totalUsd, treatments: input.treatments.length }, 'Quote generated')
 
     return {
       quoteId,
@@ -133,13 +156,14 @@ export class DentalPricingService {
       lineItems,
       subtotalUsd,
       totalUsd,
-      currency:        input.currency.toUpperCase(),
-      totalInCurrency: round2(totalInCurrency),
-      exchangeRate:    rate,
+      totalNetProfitUsd: round2(totalNetProfitUsd),
+      currency:        conversion.currency,
+      totalInCurrency: conversion.convertedAmount,
+      exchangeRate:    conversion.appliedRate,
       financingOptions: financing,
       validUntil,
       disclaimer:      'Esta cotización es orientativa y puede variar según la evaluación clínica del odontólogo. Los precios no incluyen impuestos locales.',
-      algorithmVersion: 'dental-pricing-v1.0.0',
+      algorithmVersion: 'dental-pricing-v2.0.0',
       generatedAt:     new Date().toISOString(),
     }
   }
@@ -162,89 +186,4 @@ function computeFinancing(totalAmount: number): FinancingOption[] {
   })
 }
 
-async function convertCurrency(amountUsd: number, toCurrency: string): Promise<{ rate: number; totalInCurrency: number }> {
-  if (toCurrency.toUpperCase() === 'USD') return { rate: 1.0, totalInCurrency: amountUsd }
-  // Static rates — replace with live API in Fase 3
-  const RATES: Record<string, number> = {
-    MXN: 17.15, COP: 4000, ARS: 870, CLP: 930,
-    PEN: 3.72, BRL: 4.97, EUR: 0.92, CAD: 1.37,
-  }
-  const rate = RATES[toCurrency.toUpperCase()] ?? 1.0
-  return { rate, totalInCurrency: round2(amountUsd * rate) }
-}
-
 function round2(n: number): number { return Math.round(n * 100) / 100 }
-
-// =============================================================================
-// src/dental/dental-treatment.service.ts
-// Treatment snapshots — immutable records of approved treatment plans
-// =============================================================================
-
-export interface TreatmentSnapshotInput {
-  tenantId:       string
-  patientRef:     string         // pseudonymous patient reference
-  treatments:     Array<{ code: string; quantity: number; notes?: string }>
-  priceQuoteId:   string
-  totalUsd:       number
-  currency:       string
-  approvedBy?:    string        // dentist UUID
-  consentGiven:   boolean
-  locationCode?:  string
-}
-
-export interface TreatmentSnapshot {
-  snapshotId:      string
-  tenantId:        string
-  patientRef:      string
-  status:          'PENDING' | 'APPROVED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
-  treatments:      TreatmentSnapshotInput['treatments']
-  priceQuoteId:    string
-  totalUsd:        number
-  currency:        string
-  approvedBy?:     string
-  consentGiven:    boolean
-  algorithmVersion: string
-  createdAt:       string
-}
-
-export async function createTreatmentSnapshot(input: TreatmentSnapshotInput): Promise<TreatmentSnapshot> {
-  if (!input.consentGiven) {
-    throw Object.assign(new Error('Patient consent is required before creating a treatment snapshot'), { statusCode: 403 })
-  }
-
-  const db = getDb()
-  const row = await db.rawQueryOne(
-    `INSERT INTO dental_treatment_snapshots (
-       id, "tenantId", "patientRef", status,
-       treatments, "priceQuoteId", "totalUsd", currency,
-       "approvedBy", "consentGiven", "algorithmVersion", "createdAt"
-     ) VALUES (
-       gen_random_uuid(), $1::uuid, $2, 'PENDING',
-       $3::jsonb, $4, $5, $6,
-       $7, $8, 'dental-treatment-v1.0.0', NOW()
-     ) RETURNING id, "createdAt"`,
-    [
-      input.tenantId, input.patientRef,
-      JSON.stringify(input.treatments), input.priceQuoteId,
-      input.totalUsd, input.currency,
-      input.approvedBy ?? null, input.consentGiven,
-    ]
-  )
-
-  logger.info({ tenantId: input.tenantId, snapshotId: row!.id, total: input.totalUsd }, 'Treatment snapshot created')
-
-  return {
-    snapshotId:       row!.id as string,
-    tenantId:         input.tenantId,
-    patientRef:       input.patientRef,
-    status:           'PENDING',
-    treatments:       input.treatments,
-    priceQuoteId:     input.priceQuoteId,
-    totalUsd:         input.totalUsd,
-    currency:         input.currency,
-    approvedBy:       input.approvedBy,
-    consentGiven:     input.consentGiven,
-    algorithmVersion: 'dental-treatment-v1.0.0',
-    createdAt:        (row!.createdAt as Date).toISOString(),
-  }
-}
