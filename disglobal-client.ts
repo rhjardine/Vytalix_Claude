@@ -236,12 +236,12 @@ export class DisgglobalVytalixClient {
         headers: { 'X-API-Key': this.apiKey, 'X-Correlation-ID': crypto.randomUUID() },
         signal:  AbortSignal.timeout(5_000),
       })
-      const body = await res.json().catch(() => ({}))
+      const body = await res.json().catch(() => ({})) as Record<string, any>
       if (!res.ok) {
-        return { ready: false, status: body.status ?? 'not_ready', checks: body.checks }
+        return { ready: false, status: (body.status as string) ?? 'not_ready', checks: body.checks }
       }
-      return { ready: true, status: body.status ?? 'ready', version: body.version, checks: body.checks }
-    } catch (err: any) {
+      return { ready: true, status: (body.status as string) ?? 'ready', version: body.version as string | undefined, checks: body.checks }
+    } catch (_err) {
       return { ready: false, status: 'unreachable' }
     }
   }

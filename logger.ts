@@ -52,3 +52,47 @@ export const clinicalLog = {
     logger.warn({ ...ctx, event: 'rbac.denied' }, `Access denied: ${ctx.role} → ${ctx.method} ${ctx.path}`)
   },
 }
+
+// ─────────────────────────────────────────────────────────────────
+// API call logging — structured entries for external integrations
+// Use in external-v2.handler.ts for Disglobal request traceability
+// ─────────────────────────────────────────────────────────────────
+
+export const apiCallLog = {
+  request(ctx: {
+    correlationId: string
+    tenantId:      string
+    keyId:         string
+    method:        string
+    path:          string
+    operation:     string
+  }) {
+    logger.info({ ...ctx, event: 'api.request' }, `API ${ctx.operation}: ${ctx.method} ${ctx.path}`)
+  },
+
+  response(ctx: {
+    correlationId: string
+    tenantId:      string
+    keyId:         string
+    operation:     string
+    statusCode:    number
+    durationMs:    number
+    cached?:       boolean
+  }) {
+    const level = ctx.statusCode >= 500 ? 'error' : ctx.statusCode >= 400 ? 'warn' : 'info'
+    logger[level](
+      { ...ctx, event: 'api.response' },
+      `API ${ctx.operation} → ${ctx.statusCode} (${ctx.durationMs}ms)${ctx.cached ? ' [CACHED]' : ''}`
+    )
+  },
+
+  quotaWarning(ctx: { correlationId: string; tenantId: string; usedPct: number }) {
+    logger.warn({ ...ctx, event: 'quota.warning' },
+      `Quota warning: tenant has used ${ctx.usedPct.toFixed(1)}% of monthly limit`)
+  },
+
+  quotaExceeded(ctx: { correlationId: string; tenantId: string; operation: string }) {
+    logger.error({ ...ctx, event: 'quota.exceeded' },
+      `Quota exceeded: tenant blocked on operation ${ctx.operation}`)
+  },
+}
