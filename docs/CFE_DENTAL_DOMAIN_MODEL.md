@@ -1,77 +1,177 @@
 # CFE Dental — Modelo de Dominio
 
-Este documento define el vocabulario estandarizado y las estructuras de datos fundamentales para la vertical financiera odontológica.
+> **Versión:** 2.0.0 | **Sprint:** CFE Dental Foundation v2.0
 
-## 1. DentalProcedure
-Representa la unidad atómica de facturación y costeo.
+---
 
+## Vocabulario Estandarizado
+
+| Término | Definición |
+|---|---|
+| **Procedimiento** | Servicio odontológico facturable (ej. extracción, corona, implante) |
+| **Cotización** | Propuesta económica presentada al paciente para un conjunto de procedimientos |
+| **Presupuesto Congelado** | Una cotización cuyo precio ha sido bloqueado y no puede cambiar retrospectivamente |
+| **Versión de Plan** | Iteración de una cotización tras modificaciones del paciente o el doctor |
+| **Margen** | Diferencia entre precio de venta y costo base (expresado como % del precio de venta) |
+| **Snapshot Financiero** | Registro inmutable de las condiciones económicas en el momento de cotizar |
+| **Movimiento de Inventario** | Registro auditado de entrada o salida de material consumible |
+
+---
+
+## Entidades
+
+### TreatmentCode
+Enumeración de los 18 procedimientos soportados en v2.0.
+
+```
+BLANQUEAMIENTO_LASER | CARILLA_PORCELANA | CORONA_METAL_PORCELANA | CORONA_ZIRCONIA
+IMPLANTE_TITANIO | ORTODONCIA_TRADICIONAL | ORTODONCIA_INVISIBLE
+ENDODONCIA_ANTERIOR | ENDODONCIA_PREMOLAR | ENDODONCIA_MOLAR
+EXTRACCION_SIMPLE | EXTRACCION_QUIRURGICA | LIMPIEZA_PROFILAXIS
+RESTAURACION_RESINA | PROTESIS_PARCIAL | PROTESIS_TOTAL | INJERTO_OSEO | CIRUGIA_PERIODONTAL
+```
+
+### DentalProcedure
 ```typescript
-export type TreatmentCode = 'LIMPIEZA_PROFILAXIS' | 'CORONA_ZIRCONIA' | 'IMPLANTE_TITANIO' | ...;
-
-export interface DentalProcedure {
-  code: TreatmentCode;
-  quantity: number;
-  notes?: string;
+{
+  code:     TreatmentCode   // Procedimiento
+  quantity: number          // Unidades (ej. 4 carillas)
+  toothRef?: string         // Pieza dental (notación FDI, ej. "21-24")
+  notes?:   string          // Notas clínicas o comerciales
 }
 ```
 
-## 2. FinancialSnapshot
-Captura inmutable del estado financiero acordado (o propuesto) para un paciente en un instante de tiempo.
-
+### PricingRule
+Descuento o precio especial aplicado a una cotización:
 ```typescript
-export interface FinancialSnapshot {
-  totalCostUsd: number;             // Costo real interno
-  suggestedMarginPct: number;       // Margen de ganancia
-  finalPriceUsd: number;            // Precio de venta sugerido
-  currency: string;                 // Moneda destino (ej. MXN)
-  exchangeRate: number;             // Tasa aplicada
-  totalInCurrency: number;          // Monto a pagar
-  financingMonths?: number;         // Plazo de cuotas
-  financingMonthlyPayment?: number; // Valor de la cuota
+{
+  ruleId:           string
+  type:             'FLAT_DISCOUNT' | 'PERCENT_DISCOUNT' | 'CORPORATE_RATE' | 'PACKAGE_BUNDLE'
+  discountPct?:     number    // Para PERCENT_DISCOUNT
+  flatAmountUsd?:   number    // Para FLAT_DISCOUNT
+  corporatePriceUsd?: number  // Para CORPORATE_RATE
+  validFrom:        string    // ISO date
+  validUntil:       string    // ISO date
 }
 ```
 
-## 3. TreatmentVersion
-Versión específica de un plan. Se crea cada vez que el odontólogo o el paciente alteran las condiciones clínicas o financieras.
-
+### ExchangeRateSnapshot
+Tipo de cambio congelado para preservar la cotización histórica:
 ```typescript
-export interface TreatmentVersion {
-  versionNumber: number;            // Incrementa secuencialmente (1, 2, 3...)
-  procedures: DentalProcedure[];    // Tratamientos incluidos
-  financials: FinancialSnapshot;    // Condiciones financieras
-  createdAt: string;                // Timestamp ISO
-  createdBy: string;                // UUID del operador
-  modificationsNote?: string;       // Ej. "Se removió la carilla a petición del paciente"
+{
+  snapshotId:     string     // "FX-XXXXXXXX"
+  baseCurrency:   string     // "USD"
+  targetCurrency: string     // "MXN", "COP", etc.
+  rate:           number
+  lockedAt:       string     // ISO timestamp
+  validUntil:     string
+  provider:       string     // fuente de la tasa
 }
 ```
 
-## 4. TreatmentPlan
-Contenedor maestro que agrupa toda la línea temporal de versiones propuestas al paciente para resolver un cuadro clínico particular.
-
+### InventoryItem
 ```typescript
-export interface TreatmentPlan {
-  planId: string;                   // Identificador único del plan (ej. TP-1234)
-  tenantId: string;
-  patientRef: string;               // ID del paciente
-  status: 'DRAFT' | 'PRESENTED' | 'ACCEPTED' | 'REJECTED';
-  currentVersion: number;           // Apunta a la versión activa
-  versions: TreatmentVersion[];     // Historial completo
+{
+  itemId:        string
+  tenantId:      string
+  name:          string
+  unit:          'UNIT' | 'ML' | 'GR' | 'TUBE' | 'PACK' | 'VIAL'
+  unitCostUsd:   number
+  currentStock:  number
+  minimumStock:  number      // umbral de alerta de stock bajo
+  linkedTreatmentCodes?: TreatmentCode[]
 }
 ```
 
-## 5. ExchangeRateSnapshot
-Congelamiento de la tasa de cambio utilizada para garantizar que la clínica asume o mitiga el riesgo cambiario correctamente durante la validez del presupuesto (generalmente 7 a 30 días).
-
+### InventoryMovement
+Registro auditado e inmutable de cambios de stock:
 ```typescript
-export interface ExchangeRateSnapshot {
-  baseCurrency: string;             // ej. USD
-  targetCurrency: string;           // ej. MXN
-  rate: number;                     // ej. 17.15
-  lockedAt: string;
-  validUntil: string;
-  provider: string;                 // Origen de la tasa
+{
+  movementId:     string      // "MOV-XXXXXXXX"
+  tenantId:       string
+  itemId:         string
+  quantity:       number      // positivo = entrada, negativo = salida
+  reason:         'PROCEDURE_CONSUMPTION' | 'PURCHASE' | 'ADJUSTMENT' | 'EXPIRY' | 'RETURN'
+  treatmentRef?:  string      // planId o quoteId que causó el consumo
+  patientRef?:    string
+  performedBy:    string
+  unitCostAtTime: number      // costo en el momento del movimiento
+  performedAt:    string      // ISO timestamp inmutable
 }
 ```
 
-## 6. PricingRule (Próximamente)
-Reservado para Fase 3. Representará descuentos corporativos, convenios con aseguradoras, o promociones por volumen (ej. "Tercera carilla al 50%").
+### FinancialSnapshot
+Freeze completo e inmutable de las condiciones financieras de una cotización:
+```typescript
+{
+  snapshotId:              string    // "FS-XXXXXXXX"
+  // Desglose de costo
+  totalMaterialsCostUsd:   number
+  totalLabWorkUsd:         number
+  totalLaborUsd:           number
+  totalOverheadUsd:        number
+  totalBaseCostUsd:        number
+  // Precio
+  appliedMarginPct:        number
+  suggestedPriceUsd:       number
+  discountAppliedUsd:      number
+  finalPriceUsd:           number
+  netProfitUsd:            number
+  // Moneda
+  currency:                string
+  exchangeRate:            number
+  exchangeSnapshotId:      string    // FK a ExchangeRateSnapshot
+  totalInCurrency:         number
+  // Financiamiento (opcional)
+  financingMonths?:        number
+  financingMonthlyPayment?: number
+  financingTotalAmount?:   number
+  financingInterestUsd?:   number
+  // Metadatos de trazabilidad
+  algorithmVersion:        string
+  frozenAt:                string    // El timestamp de congelamiento
+}
+```
+
+### TreatmentVersion
+Versión inmutable de un plan de tratamiento:
+```typescript
+{
+  versionNumber:    number
+  procedures:       DentalProcedure[]
+  appliedRules:     PricingRule[]
+  financials:       FinancialSnapshot   // snapshot inmutable
+  exchangeSnapshot: ExchangeRateSnapshot
+  inventoryImpact:  InventoryImpactEstimate[]
+  createdAt:        string
+  createdBy:        string
+  modificationsNote?: string
+}
+```
+
+### TreatmentPlan
+Contenedor de todo el historial de versiones de un presupuesto:
+```typescript
+{
+  planId:         string              // "TP-XXXXXXXX"
+  tenantId:       string
+  patientRef:     string
+  doctorRef:      string
+  status:         'DRAFT' | 'PRESENTED' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED'
+  currentVersion: number
+  versions:       TreatmentVersion[]  // historial completo
+  createdAt:      string
+  updatedAt:      string
+}
+```
+
+---
+
+## Invariantes del Dominio
+
+1. Un `FinancialSnapshot` nunca se modifica — sólo se crea.
+2. Un `TreatmentPlan` nunca pierde versiones anteriores.
+3. Un `InventoryMovement` nunca se modifica — es append-only.
+4. El `currentVersion` del plan siempre apunta a la última versión en `versions[]`.
+5. El stock nunca puede ir a negativo — el engine rechaza la operación.
+6. Las `PricingRule` vencidas nunca se aplican, aunque estén en la lista.

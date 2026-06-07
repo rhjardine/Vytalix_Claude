@@ -15,35 +15,18 @@
 //   - Clinician in the loop: cost is "estimate", not binding quote
 // =============================================================================
 
+import { TreatmentCode, TreatmentCategory } from './types'
+export type { TreatmentCode }  // re-export for backward compat
+
 export const DENTAL_COST_ENGINE_VERSION = '1.0.0'
 
 // ── Treatment catalog ─────────────────────────────────────────────
-
-export type TreatmentCode =
-  | 'BLANQUEAMIENTO_LASER'
-  | 'CARILLA_PORCELANA'
-  | 'CORONA_METAL_PORCELANA'
-  | 'CORONA_ZIRCONIA'
-  | 'IMPLANTE_TITANIO'
-  | 'ORTODONCIA_TRADICIONAL'
-  | 'ORTODONCIA_INVISIBLE'
-  | 'ENDODONCIA_ANTERIOR'
-  | 'ENDODONCIA_PREMOLAR'
-  | 'ENDODONCIA_MOLAR'
-  | 'EXTRACCION_SIMPLE'
-  | 'EXTRACCION_QUIRURGICA'
-  | 'LIMPIEZA_PROFILAXIS'
-  | 'RESTAURACION_RESINA'
-  | 'PROTESIS_PARCIAL'
-  | 'PROTESIS_TOTAL'
-  | 'INJERTO_OSEO'
-  | 'CIRUGIA_PERIODONTAL'
 
 export interface TreatmentDefinition {
   code:              TreatmentCode
   name:              string
   nameEs:            string
-  category:          'AESTHETIC' | 'RESTORATIVE' | 'SURGICAL' | 'ORTHODONTIC' | 'PREVENTIVE' | 'PROSTHETIC'
+  category:          TreatmentCategory
   avgDurationMinutes: number
   materialsCostUsd:  number   // base materials cost in USD
   labWorkUsd:        number   // external lab fees (if any)

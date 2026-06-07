@@ -1,57 +1,109 @@
-# CFE Dental — Arquitectura de la Vertical de Odontología Financiera
+# CFE Dental — Arquitectura del Sistema
 
-## 1. Visión General
-CFE Dental es un módulo independiente del ecosistema Vytalix, enfocado estrictamente en la gestión financiera odontológica: costeo de tratamientos, cálculo de márgenes y rentabilidad real, simulación de cuotas, y gestión multi-divisa.
+> **Vytalix v2 | Sprint: CFE Dental Foundation v2.0**  
+> **Clasificación:** Documento Técnico Interno  
+> **Última actualización:** 2026-06-07
 
-La decisión arquitectónica principal es el **aislamiento estricto** respecto al Core Clínico de Vytalix y de los algoritmos de Disglobal.
+---
 
-## 2. Principios Arquitectónicos
+## 1. Posición en el Ecosistema Vytalix
 
-- **Ausencia de Persistencia (Temporal):** En esta fase inicial, todos los motores son "puros". Toman entradas, computan resultados financieros y devuelven estructuras de datos predecibles. La persistencia (repositorios, bases de datos) queda postergada a la Fase 3.
-- **Desacoplamiento Clínico:** El catálogo de tratamientos define métricas comerciales (tiempo, costo, complejidad) y no reglas clínicas.
-- **Inmutabilidad y Versionado:** Cualquier alteración a un plan de tratamiento genera un nuevo `TreatmentVersion` sin sobrescribir el historial.
-
-## 3. Topología de Motores
-
-El sistema se compone de cuatro motores matemáticos puros, orquestados por un servicio unificador (`DentalPricingService`).
-
-### 3.1 DentalCostEngine (`dental-cost.engine.ts`)
-Calcula el **Costo Base Real**.
-Toma en cuenta el costo de materiales, costo del trabajo de laboratorio, costo por hora-silla (labor), ajuste por ubicación geográfica (CDMX vs. Monterrey), y un porcentaje de costos fijos (overhead).
-
-### 3.2 MarginEngine (`margin.engine.ts`)
-Calcula el **Margen de Ganancia y Riesgo Financiero**.
-Toma el resultado del CostEngine y añade un margen de rentabilidad sugerido. Puede recibir un objetivo de ganancia manual, o calcularlo dinámicamente en base a la complejidad del tratamiento.
-
-### 3.3 ExchangeEngine (`exchange.engine.ts`)
-Gestiona el **Riesgo Cambiario**.
-Realiza conversiones de moneda usando tasas de cambio o emitiendo `ExchangeRateSnapshot` para garantizar que la clínica "congele" la tasa durante el periodo de vigencia del presupuesto.
-
-### 3.4 SnapshotEngine (`snapshot.engine.ts`)
-Gestiona la **Trazabilidad y el Historial**.
-Garantiza que cualquier cotización (`FinancialSnapshot`) esté vinculada a una versión inmutable (`TreatmentVersion`) del plan maestro (`TreatmentPlan`).
-
-## 4. Flujo de Datos
-
-```mermaid
-graph TD
-    A[Frontend/API] -->|Solicita Cotización| B(DentalPricingService)
-    
-    B -->|Lista de Procedimientos| C{DentalCostEngine}
-    C -->|Retorna Costo Base| B
-    
-    B -->|Costo + Complejidad| D{MarginEngine}
-    D -->|Precio de Venta Sugerido| B
-    
-    B -->|Monto + Moneda Objetivo| E{ExchangeEngine}
-    E -->|Monto Convertido| B
-    
-    B -->|Estructura de Venta| F{SnapshotEngine}
-    F -->|TreatmentVersion Inmutable| B
-    
-    B -->|Retorna Cotización Final| A
+```
+Vytalix Ecosystem
+│
+├── src/core/            ← Motor clínico: riesgo CV, decisiones médicas
+├── src/longevity/       ← Edad biológica, preventive score, referral
+├── src/platform/        ← DB, Redis, logger, metering, SDK Disglobal
+├── src/shared/          ← Contratos públicos, engagement
+│
+└── src/dental/          ← CFE Dental (dominio autónomo)
+    ├── types.ts             ← ÚNICA fuente de verdad de entidades
+    ├── dental-cost.engine.ts
+    ├── margin.engine.ts
+    ├── exchange.engine.ts
+    ├── inventory.engine.ts  ← NUEVO
+    ├── snapshot.engine.ts
+    ├── quote.orchestrator.ts ← NUEVO: punto de entrada principal
+    ├── dental-pricing.service.ts
+    └── index.ts             ← NUEVO: barrel público del dominio
 ```
 
-## 5. Reglas de Dependencias
-- `src/dental/` **PUEDE** importar de `src/shared/`.
-- `src/dental/` **NO PUEDE** importar de `src/core/`, `src/longevity/`, `src/preventive/`, `src/biological-age/`, ni `src/referral/`.
+## 2. Contrato de Aislamiento (Regla Estricta)
+
+| Dirección | Permitido | Prohibido |
+|---|---|---|
+| `src/dental` → `src/shared` | ✅ Contratos explícitos únicamente | ❌ Importar lógica clínica |
+| `src/dental` → `src/core` | ❌ NUNCA | — |
+| `src/dental` → `src/longevity` | ❌ NUNCA | — |
+| `src/core` → `src/dental` | ❌ NUNCA | — |
+| `src/api` → `src/dental` | ✅ Solo a través de `src/dental/index.ts` | ❌ Importar archivos internos directamente |
+
+**Verificación:** `grep -r "from.*dental" src/core` debe retornar vacío.
+
+## 3. Flujo de Datos de una Cotización
+
+```
+Doctor ingresa tratamientos
+         │
+         ▼
+QuoteOrchestrator.generate()
+         │
+         ├──► DentalCostEngine.compute()        → CostEstimateResult × N
+         │         (materiales + labor + overhead + location factor)
+         │
+         ├──► MarginEngine.compute()            → MarginEngineResult × N
+         │         (aplica margen según complejidad + riesgo financiero)
+         │
+         ├──► PricingRule.apply()               → descuentos y reglas
+         │
+         ├──► ExchangeEngine.generateSnapshot() → ExchangeRateSnapshot (congelado)
+         │
+         ├──► InventoryEngine.estimateImpact()  → InventoryImpactEstimate[]
+         │         (opcional; detecta stock insuficiente)
+         │
+         └──► FinancialSnapshot (inmutable)
+                   + TreatmentVersion v1
+                   + TreatmentPlan (status: DRAFT)
+                         │
+                         ▼
+                 QuoteResult (entregado al doctor)
+```
+
+## 4. Principios de Diseño
+
+### 4.1 Motores Puros
+Todos los motores son **funciones puras sin side effects**:
+- No conectan a DB
+- No llaman APIs externas
+- Mismo input → mismo output (determinismo verificado en tests)
+- Fallan con errores descriptivos y statusCode semántico
+
+### 4.2 Inmutabilidad de Snapshots
+La entidad `FinancialSnapshot` es **append-only**. Una vez creada:
+- **Nunca** se modifica
+- Cada cambio al plan genera una nueva `TreatmentVersion` con su propio snapshot
+- El historial de versiones se conserva completo en `TreatmentPlan.versions[]`
+
+### 4.3 Inventario sin Persistencia (Sprint Actual)
+El `InventoryEngine` opera sobre un `InventoryState` en memoria. En el siguiente sprint se persiste en DB. El diseño es funcional puro — el estado se pasa como argumento y el resultado es un nuevo estado inmutable.
+
+### 4.4 Idempotencia de IDs
+Los IDs de `TreatmentPlan`, `FinancialSnapshot` y `ExchangeRateSnapshot` son generados con `crypto.randomUUID()` — seguros y únicos.
+
+## 5. Decisiones Arquitectónicas
+
+| Decisión | Justificación |
+|---|---|
+| `types.ts` como única fuente de entidades | Evita inconsistencias entre motores; un único lugar para cambiar |
+| `index.ts` como barrel público | Permite refactoring interno sin romper importadores externos |
+| `QuoteOrchestrator` como punto de entrada | Coordina todos los motores; simplifica el test de integración |
+| `InventoryState` en memoria con diseño funcional | Permite adoptar persistencia sin cambiar la interfaz |
+| `ExchangeRateSnapshot` congelado al momento de cotizar | El presupuesto no varía si el tipo de cambio cambia después |
+
+## 6. Expansión Futura (No en este Sprint)
+
+- **Persistencia:** `TreatmentPlanRepository` (Prisma) para `TreatmentPlan` e `InventoryMovement`
+- **API HTTP:** Endpoint `POST /api/v2/dental/quote` registrado en `src/server.ts`
+- **PricingRule corporativa:** Convenios por empresa o aseguradora
+- **Agenda de consultas:** Si el flujo de cobro lo requiere
+- **Reportes financieros:** COGS mensual, margen por procedimiento, por doctor
