@@ -1,0 +1,674 @@
+openapi: 3.1.0
+
+info:
+  title: Vytalix Commerce API v2
+  version: "2.0"
+  description: |
+    Longevity Commerce API — Catalog, Pricing, Vouchers, Booking, Fulfillment.
+    Designed for consumption by Disglobal and future commercial partners.
+
+    **Authentication:** Bearer API key in Authorization header.
+    **Monetary values:** All amounts are in minor currency units (centavos/cents).
+    **Idempotency:** Use unique `correlationId` per write operation.
+
+servers:
+  - url: https://api.vytalix.com/api/v2/commerce
+    description: Production
+  - url: https://sandbox.vytalix.com/api/v2/commerce
+    description: Sandbox
+
+security:
+  - PartnerApiKey: []
+
+components:
+  securitySchemes:
+    PartnerApiKey:
+      type: http
+      scheme: bearer
+      description: Partner API key issued during onboarding (prefix vx2_)
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          description: Amount in minor currency units (e.g., 200000 = $2,000.00 MXN)
+          example: 200000
+        currency:
+          type: string
+          enum: [USD, MXN, COP, PEN, EUR]
+
+    CatalogItem:
+      type: object
+      required: [id, sku, type, deliveryMode, name, requiresBooking, requiresShipping, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+          example: DAV-CONSUL-90
+        type:
+          type: string
+          enum: [SERVICE, PRODUCT, PROGRAM, THERAPY, CONSULTATION, DIPLOMA, KIT, BUNDLE]
+        deliveryMode:
+          type: string
+          enum: [DIGITAL, PHYSICAL, IN_CLINIC, HYBRID]
+        name:
+          type: string
+        shortDescription:
+          type: string
+        durationMinutes:
+          type: integer
+          nullable: true
+        sessionCount:
+          type: integer
+          nullable: true
+        requiresBooking:
+          type: boolean
+        requiresShipping:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, PAUSED, DISCONTINUED]
+
+    PriceQuote:
+      type: object
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        basePrice:
+          $ref: '#/components/schemas/Money'
+        finalPrice:
+          $ref: '#/components/schemas/Money'
+        discountApplied:
+          $ref: '#/components/schemas/Money'
+        appliedRuleType:
+          type: string
+          nullable: true
+        validUntil:
+          type: string
+          format: date-time
+        quotedAt:
+          type: string
+          format: date-time
+
+    Voucher:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        token:
+          type: string
+          description: 64-character hex token (256-bit entropy)
+        qrPayload:
+          type: string
+          description: Base64url-encoded QR payload. Pass to QRCode.toDataURL()
+        status:
+          type: string
+          enum: [PENDING, ACTIVE, REDEEMED, EXPIRED, CANCELLED, SUSPENDED]
+        type:
+          type: string
+          enum: [SINGLE_USE, MULTI_USE, UNLIMITED]
+        totalUses:
+          type: integer
+        usedCount:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+        pricePaidSnapshot:
+          $ref: '#/components/schemas/Money'
+        correlationId:
+          type: string
+
+    RedemptionEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        voucherId:
+          type: string
+          format: uuid
+        result:
+          type: string
+          enum: [SUCCESS, ALREADY_REDEEMED, EXPIRED, INVALID, SUSPENDED]
+        channel:
+          type: string
+          enum: [QR_SCAN, MANUAL, API, KIOSK]
+        redeemedAt:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+
+    AvailableSlot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+          example: America/Mexico_City
+        locationId:
+          type: string
+          nullable: true
+        remainingCapacity:
+          type: integer
+          minimum: 1
+
+    Booking:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [REQUESTED, CONFIRMED, CHECKED_IN, COMPLETED, CANCELLED, NO_SHOW]
+        catalogItemId:
+          type: string
+          format: uuid
+        slot:
+          type: object
+          properties:
+            startTime:
+              type: string
+              format: date-time
+            endTime:
+              type: string
+              format: date-time
+            timezone:
+              type: string
+        locationId:
+          type: string
+          nullable: true
+        correlationId:
+          type: string
+
+    FulfillmentOrder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [CREATED, PROCESSING, SHIPPED, DELIVERED, FAILED, RETURNED]
+        trackingNumber:
+          type: string
+          nullable: true
+        carrier:
+          type: string
+          nullable: true
+        estimatedDeliveryDate:
+          type: string
+          format: date
+          nullable: true
+        shippedAt:
+          type: string
+          format: date-time
+          nullable: true
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ApiResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        error:
+          type: object
+          nullable: true
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        meta:
+          type: object
+          properties:
+            requestId:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+            version:
+              type: string
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+paths:
+  /catalog:
+    get:
+      operationId: listCatalogItems
+      summary: List active catalog items
+      tags: [Catalog]
+      security:
+        - PartnerApiKey: [commerce:catalog:read]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [SERVICE, PRODUCT, PROGRAM, THERAPY, CONSULTATION, DIPLOMA, KIT, BUNDLE]
+        - name: deliveryMode
+          in: query
+          schema:
+            type: string
+            enum: [DIGITAL, PHYSICAL, IN_CLINIC, HYBRID]
+        - name: requiresBooking
+          in: query
+          schema:
+            type: boolean
+        - name: tags
+          in: query
+          schema:
+            type: string
+            description: Comma-separated list of tags
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: List of catalog items
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CatalogItem'
+                      pagination:
+                        $ref: '#/components/schemas/PaginationMeta'
+
+  /catalog/{itemId}:
+    get:
+      operationId: getCatalogItem
+      summary: Get a catalog item by ID
+      tags: [Catalog]
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Catalog item
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CatalogItem'
+        '404':
+          description: Item not found
+
+  /pricing/quote:
+    post:
+      operationId: quoteCatalogItem
+      summary: Get a price quote for a catalog item
+      tags: [Pricing]
+      security:
+        - PartnerApiKey: [commerce:pricing:quote]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogItemId]
+              properties:
+                catalogItemId:
+                  type: string
+                  format: uuid
+                currency:
+                  type: string
+                  enum: [USD, MXN, COP, PEN, EUR]
+                  default: USD
+      responses:
+        '200':
+          description: Price quote (valid 15 minutes)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PriceQuote'
+
+  /pricing/bundle-quote:
+    post:
+      operationId: quoteBundleItems
+      summary: Get a combined price quote for multiple items
+      tags: [Pricing]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemIds]
+              properties:
+                itemIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  minItems: 2
+                currency:
+                  type: string
+                  enum: [USD, MXN, COP, PEN, EUR]
+                  default: USD
+      responses:
+        '200':
+          description: Bundle price quote with savings
+
+  /vouchers:
+    post:
+      operationId: issueVoucher
+      summary: Issue a voucher after payment confirmation
+      tags: [Vouchers]
+      security:
+        - PartnerApiKey: [commerce:vouchers:issue]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [partnerId, catalogItemId, type, expiresInDays, pricePaid, correlationId]
+              properties:
+                partnerId:
+                  type: string
+                  format: uuid
+                catalogItemId:
+                  type: string
+                  format: uuid
+                type:
+                  type: string
+                  enum: [SINGLE_USE, MULTI_USE, UNLIMITED]
+                beneficiaryId:
+                  type: string
+                  description: Opaque patient/user identifier in Disglobal's system
+                expiresInDays:
+                  type: integer
+                  minimum: 1
+                  example: 365
+                pricePaid:
+                  $ref: '#/components/schemas/Money'
+                correlationId:
+                  type: string
+                  description: Unique per purchase — used for idempotency
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '201':
+          description: Voucher issued successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Voucher'
+
+  /vouchers/{token}:
+    get:
+      operationId: getVoucherByToken
+      summary: Check voucher status by token
+      tags: [Vouchers]
+      security:
+        - PartnerApiKey: [commerce:vouchers:read]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Voucher details
+        '404':
+          description: Voucher not found
+
+  /vouchers/redeem:
+    post:
+      operationId: redeemVoucher
+      summary: Validate and consume a voucher at point of service
+      tags: [Vouchers]
+      security:
+        - PartnerApiKey: [commerce:vouchers:redeem]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, redeemedBy, channel, correlationId]
+              properties:
+                token:
+                  type: string
+                redeemedBy:
+                  type: string
+                  description: Operator or device ID
+                channel:
+                  type: string
+                  enum: [QR_SCAN, MANUAL, API, KIOSK]
+                locationId:
+                  type: string
+                bookingId:
+                  type: string
+                  format: uuid
+                correlationId:
+                  type: string
+                  description: Unique per redemption attempt — idempotency key
+      responses:
+        '200':
+          description: Voucher redeemed successfully
+        '409':
+          description: Voucher already redeemed
+        '410':
+          description: Voucher expired
+        '422':
+          description: Invalid token or suspended voucher
+
+  /booking/slots:
+    get:
+      operationId: listAvailableSlots
+      summary: List available booking slots for a catalog item
+      tags: [Booking]
+      security:
+        - PartnerApiKey: [commerce:bookings:read]
+      parameters:
+        - name: catalogItemId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: fromDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: toDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: locationId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Available slots
+
+  /bookings:
+    post:
+      operationId: createBooking
+      summary: Reserve a slot
+      tags: [Booking]
+      security:
+        - PartnerApiKey: [commerce:bookings:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogItemId, beneficiaryId, slotId, correlationId]
+              properties:
+                voucherId:
+                  type: string
+                  format: uuid
+                catalogItemId:
+                  type: string
+                  format: uuid
+                beneficiaryId:
+                  type: string
+                slotId:
+                  type: string
+                  format: uuid
+                notes:
+                  type: string
+                correlationId:
+                  type: string
+      responses:
+        '201':
+          description: Booking created
+        '409':
+          description: Slot fully booked
+
+  /bookings/{bookingId}:
+    get:
+      operationId: getBooking
+      summary: Get booking status
+      tags: [Booking]
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Booking details
+        '404':
+          description: Not found
+
+  /bookings/{bookingId}/cancel:
+    post:
+      operationId: cancelBooking
+      summary: Cancel a booking
+      tags: [Booking]
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Booking cancelled
+
+  /fulfillment/{orderId}:
+    get:
+      operationId: getFulfillmentOrder
+      summary: Track a physical fulfillment order
+      tags: [Fulfillment]
+      security:
+        - PartnerApiKey: [commerce:fulfillment:read]
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Fulfillment order details
+        '404':
+          description: Order not found
+
+tags:
+  - name: Catalog
+    description: Browse and query the Doctor Antivejez product catalog
+  - name: Pricing
+    description: Get price quotes for individual items and bundles
+  - name: Vouchers
+    description: Issue, check, and redeem commercial vouchers
+  - name: Booking
+    description: Browse availability and reserve clinic sessions
+  - name: Fulfillment
+    description: Track physical product delivery orders
