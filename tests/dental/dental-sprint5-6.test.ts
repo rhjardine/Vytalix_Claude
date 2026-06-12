@@ -19,11 +19,11 @@ import {
   PricingRuleRepository,
   ExchangeRateRepository,
   TenantSettingsService,
-} from '../dental/repositories/dental-financial.repositories';
+} from '../../src/dental/repositories/dental-financial.repositories';
 import {
   DentalVoucherEngine,
   DentalBookingEngine,
-} from '../dental/engines/DentalCommerceEngines';
+} from '../../src/dental/engines/dental-commerce.engines';
 import { randomBytes, createHmac } from 'crypto';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

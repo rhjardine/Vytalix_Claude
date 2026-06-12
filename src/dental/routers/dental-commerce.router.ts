@@ -18,19 +18,19 @@ import {
   IssueDentalVoucherSchema,
   RedeemDentalVoucherSchema,
   CreateDentalBookingSchema,
-} from '../../dental/schemas/dental-schemas';
+} from '../schemas/dental-schemas';
 import {
   dentalCatalogRepository,
   pricingRuleRepository,
   tenantSettingsService,
-} from '../../dental/repositories/dental-financial.repositories';
+} from '../repositories/dental-financial.repositories';
 import {
   dentalVoucherEngine,
   dentalBookingEngine,
   DentalBookingEngine,
-} from '../../dental/engines/DentalCommerceEngines';
-import { auditService } from '../../dental/audit/AuditService';
-import { dentalMetrics } from '../../dental/metrics/PrometheusMetrics';
+} from '../engines/dental-commerce.engines';
+import { auditService } from '../services/audit.service';
+import { dentalMetrics } from '../services/prometheus-metrics';
 
 export const dentalCommerceRouter = Router();
 const tr = (req: Request): TenantRequest => req as unknown as TenantRequest;

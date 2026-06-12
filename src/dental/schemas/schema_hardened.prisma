@@ -1,0 +1,393 @@
+// =============================================================================
+// Vytalix — CFE Dental: Prisma Schema (Phase 3 Additive)
+// =============================================================================
+// Design decisions:
+// 1. All dental models include tenantId for RLS policy compatibility.
+// 2. Monetary values stored as Int (minor units) + String (ISO currency).
+// 3. TreatmentPlan uses explicit versioning via TreatmentVersion — immutable
+//    once a version is sealed; mutations produce a new version.
+// 4. FinancialSnapshot is append-only (no update, no soft delete).
+// 5. InventoryMovement is append-only (audit trail); current stock derived
+//    by summing movements per item.
+// 6. Soft delete via deletedAt nullable timestamp on mutable entities.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── TREATMENT PLAN ──────────────────────────────────────────────────────────
+
+model TreatmentPlan {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid
+  patientRef  String    @db.VarChar(128)  // Opaque patient reference — no PHI
+  title       String    @db.VarChar(255)
+  description String?   @db.Text
+  status      TreatmentPlanStatus @default(DRAFT)
+  currentVersionId String? @db.Uuid
+  metadata    Json      @default("{}")
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)  // Soft delete
+
+  versions    TreatmentVersion[]
+  snapshots   FinancialSnapshot[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, patientRef])
+  // Soft delete filter: enforced by SQL partial index in migration, not in Prisma schema
+  @@map("dental_treatment_plans")
+}
+
+enum TreatmentPlanStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+// ─── TREATMENT VERSION ───────────────────────────────────────────────────────
+// Immutable once sealed. Each modification of a plan creates a new version.
+
+model TreatmentVersion {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  planId        String   @db.Uuid
+  versionNumber Int
+  status        TreatmentVersionStatus @default(DRAFT)
+
+  // Treatment items snapshot at this version
+  items         Json     // TreatmentItem[] — serialised for immutability
+
+  // Financial snapshot at this version
+  subtotalAmount   Int      // Minor currency units
+  discountAmount   Int      @default(0)
+  taxAmount        Int      @default(0)
+  totalAmount      Int
+  currency         String   @db.VarChar(3)
+
+  // Exchange rates snapshot (from ExchangeEngine)
+  exchangeRates    Json     @default("{}")
+
+  // Margin data snapshot (from MarginEngine)
+  marginSnapshot   Json     @default("{}")
+
+  sealedAt      DateTime? @db.Timestamptz(6)  // Null = still editable
+  createdBy     String?   @db.VarChar(128)
+  correlationId String    @db.VarChar(128)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  plan          TreatmentPlan @relation(fields: [planId], references: [id])
+
+  @@unique([planId, versionNumber])
+  @@index([tenantId, planId])
+  @@index([tenantId, status])
+  @@map("dental_treatment_versions")
+}
+
+enum TreatmentVersionStatus {
+  DRAFT
+  SEALED     // Immutable — plan was accepted
+  SUPERSEDED // Replaced by a newer version
+  REJECTED
+}
+
+// ─── INVENTORY ITEM ──────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @db.Uuid
+  sku          String  @db.VarChar(100)
+  name         String  @db.VarChar(255)
+  description  String? @db.Text
+  category     DentalInventoryCategory
+  unit         String  @db.VarChar(50)   // e.g., "unit", "ml", "g", "box"
+  reorderLevel Int     @default(0)       // Alert threshold
+  isActive     Boolean @default(true)
+  metadata     Json    @default("{}")
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+
+  movements    InventoryMovement[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, isActive])
+  @@index([tenantId, category])
+  @@map("dental_inventory_items")
+}
+
+enum DentalInventoryCategory {
+  CONSUMABLE      // Anesthesia, gloves, cotton
+  MATERIAL        // Resin, cement, impression material
+  INSTRUMENT      // Burs, matrices, files
+  EQUIPMENT       // Items with serial numbers
+  PROSTHETIC      // Crowns, implants, bridges
+  MEDICATION      // Prescription items
+  OTHER
+}
+
+// ─── INVENTORY MOVEMENT ──────────────────────────────────────────────────────
+// Append-only. Current stock = SUM of all movements for an item.
+// ENTRY = positive quantity. CONSUMPTION/ADJUSTMENT_OUT = negative.
+
+model InventoryMovement {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  itemId        String   @db.Uuid
+  type          MovementType
+  quantity      Int      // Positive for inflows, negative for outflows
+  quantityBefore Int     // Snapshot of quantity before this movement
+  quantityAfter  Int     // Snapshot of quantity after this movement
+  unitCost      Int?     // Minor units — populated for ENTRY movements
+  currency      String?  @db.VarChar(3)
+  reference     String?  @db.VarChar(255)  // PO number, treatment plan ID, etc.
+  notes         String?  @db.Text
+  performedBy   String   @db.VarChar(128)  // Opaque user reference
+  correlationId String   @db.VarChar(128)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  item          InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@index([tenantId, itemId])
+  @@index([tenantId, type])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("dental_inventory_movements")
+}
+
+enum MovementType {
+  ENTRY           // Stock received / purchased
+  CONSUMPTION     // Used in a treatment
+  ADJUSTMENT_IN   // Positive inventory correction
+  ADJUSTMENT_OUT  // Negative inventory correction / waste
+  RETURN          // Returned to supplier
+}
+
+// ─── FINANCIAL SNAPSHOT ──────────────────────────────────────────────────────
+// Append-only periodic snapshot of financial state.
+// Used by SnapshotEngine — never updated in place.
+
+model FinancialSnapshot {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  planId          String?  @db.Uuid  // Linked to a specific plan (nullable for global)
+  versionId       String?  @db.Uuid  // Linked to a specific version
+  snapshotType    SnapshotType
+  period          String   @db.VarChar(20)  // e.g., "2025-Q3", "2025-10"
+
+  // Revenue
+  grossRevenue    Int
+  discounts       Int      @default(0)
+  netRevenue      Int
+
+  // Costs
+  materialCost    Int      @default(0)
+  laborCost       Int      @default(0)
+  overheadCost    Int      @default(0)
+  totalCost       Int
+
+  // Margins (basis points — e.g., 3500 = 35.00%)
+  grossMarginBps  Int
+  netMarginBps    Int
+
+  // Exchange data
+  currency        String   @db.VarChar(3)
+  exchangeRates   Json     @default("{}")
+
+  // Quote stats (for QUOTE_BATCH type)
+  quoteCount      Int      @default(0)
+  conversionCount Int      @default(0)
+
+  correlationId   String   @db.VarChar(128)
+  generatedAt     DateTime @default(now()) @db.Timestamptz(6)
+  metadata        Json     @default("{}")
+
+  plan            TreatmentPlan? @relation(fields: [planId], references: [id])
+
+  @@index([tenantId, snapshotType, period])
+  @@index([tenantId, planId])
+  @@map("dental_financial_snapshots")
+}
+
+enum SnapshotType {
+  PLAN_VERSION    // Snapshot at plan version sealing
+  DAILY           // Daily aggregate
+  MONTHLY         // Monthly aggregate
+  QUARTERLY       // Quarterly aggregate
+  QUOTE_BATCH     // Batch of quotes generated
+}
+
+// =============================================================================
+// Sprint 4: AuditLog
+// Sprint 5: DentalCatalogItem, DentalPricingRule, ExchangeRateSnapshot,
+//           DentalTenantSettings
+// Sprint 6: DentalVoucher, DentalBooking
+// NOTE: These models are managed directly via SQL migrations.
+// Prisma is used for type reference only (no prisma migrate apply).
+// =============================================================================
+
+// ─── AUDIT LOG ───────────────────────────────────────────────────────────────
+// Append-only. Never updated, never deleted.
+
+model DentalAuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  eventType     String   @db.VarChar(50)
+  entityId      String   @db.VarChar(128)
+  entityType    String   @db.VarChar(64)
+  actorId       String   @db.VarChar(128)
+  correlationId String   @db.VarChar(128)
+  beforeState   Json?
+  afterState    Json?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, eventType])
+  @@index([tenantId, entityId])
+  @@index([correlationId])
+  @@map("dental_audit_logs")
+}
+
+// ─── DENTAL CATALOG ITEM ─────────────────────────────────────────────────────
+// Per-tenant catalog. Uses is_active for soft disable (no deletedAt — intentional).
+
+model DentalCatalogItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  code            String   @db.VarChar(64)
+  name            String   @db.VarChar(255)
+  description     String?  @db.Text
+  category        String   @db.VarChar(64)
+  baseCost        Int
+  suggestedPrice  Int
+  currency        String   @db.VarChar(3)
+  durationMinutes Int?
+  isActive        Boolean  @default(true)
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@index([tenantId, category])
+  @@map("dental_catalog_items")
+}
+
+// ─── DENTAL PRICING RULE ─────────────────────────────────────────────────────
+
+model DentalPricingRule {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  catalogItemCode  String?   @db.VarChar(64)
+  category         String?   @db.VarChar(64)
+  marginPercent    Decimal?  @db.Decimal(8, 2)
+  discountPercent  Decimal?  @db.Decimal(5, 2)
+  fixedPrice       Int?
+  currency         String?   @db.VarChar(3)
+  validFrom        DateTime  @default(now()) @db.Timestamptz(6)
+  validUntil       DateTime? @db.Timestamptz(6)
+  priority         Int       @default(0)
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, catalogItemCode])
+  @@index([tenantId, category])
+  @@map("dental_pricing_rules")
+}
+
+// ─── EXCHANGE RATE SNAPSHOT ───────────────────────────────────────────────────
+// Append-only history of exchange rate snapshots per tenant.
+
+model ExchangeRateSnapshot {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  baseCurrency String   @db.VarChar(3)
+  rates        Json
+  source       String   @db.VarChar(64) @default("manual")
+  effectiveAt  DateTime @default(now()) @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([tenantId, baseCurrency])
+  @@map("dental_exchange_rate_snapshots")
+}
+
+// ─── DENTAL TENANT SETTINGS ──────────────────────────────────────────────────
+// One row per tenant (UNIQUE on tenantId). Upserted on every change.
+
+model DentalTenantSettings {
+  id                    String   @id @default(uuid()) @db.Uuid
+  tenantId              String   @unique @db.Uuid
+  defaultCurrency       String   @db.VarChar(3) @default("MXN")
+  taxRate               Decimal  @db.Decimal(5, 2) @default(16.0)
+  defaultMarginPercent  Decimal  @db.Decimal(8, 2) @default(35.0)
+  financingEnabled      Boolean  @default(false)
+  timezone              String   @db.VarChar(64) @default("America/Mexico_City")
+  metadata              Json     @default("{}")
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("dental_tenant_settings")
+}
+
+// ─── DENTAL VOUCHER ───────────────────────────────────────────────────────────
+
+model DentalVoucher {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid
+  catalogItemCode  String    @db.VarChar(64)
+  token            String    @unique @db.VarChar(64)
+  qrPayload        String    @db.Text
+  status           String    @db.VarChar(20) @default("ACTIVE")
+  beneficiaryRef   String?   @db.VarChar(128)
+  expiresAt        DateTime  @db.Timestamptz(6)
+  redeemedAt       DateTime? @db.Timestamptz(6)
+  cancelledAt      DateTime? @db.Timestamptz(6)
+  priceAmount      Int
+  priceCurrency    String    @db.VarChar(3)
+  metadata         Json      @default("{}")
+  correlationId    String    @db.VarChar(128)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  bookings         DentalBooking[]
+
+  @@index([tenantId, status])
+  @@map("dental_vouchers")
+}
+
+// ─── DENTAL BOOKING ───────────────────────────────────────────────────────────
+
+model DentalBooking {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @db.Uuid
+  voucherId         String?   @db.Uuid
+  catalogItemCode   String    @db.VarChar(64)
+  patientRef        String    @db.VarChar(128)
+  providerId        String?   @db.VarChar(128)
+  locationId        String?   @db.VarChar(128)
+  slotStart         DateTime  @db.Timestamptz(6)
+  slotEnd           DateTime  @db.Timestamptz(6)
+  timezone          String    @db.VarChar(64) @default("UTC")
+  status            String    @db.VarChar(20) @default("REQUESTED")
+  notes             String?   @db.Text
+  cancellationReason String?  @db.Text
+  confirmedAt       DateTime? @db.Timestamptz(6)
+  completedAt       DateTime? @db.Timestamptz(6)
+  cancelledAt       DateTime? @db.Timestamptz(6)
+  correlationId     String    @db.VarChar(128)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  voucher           DentalVoucher? @relation(fields: [voucherId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([patientRef])
+  @@map("dental_bookings")
+}

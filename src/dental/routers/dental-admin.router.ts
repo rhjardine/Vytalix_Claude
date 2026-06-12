@@ -20,14 +20,14 @@ import {
   CreatePricingRuleSchema,
   CreateExchangeRateSchema,
   UpsertTenantSettingsSchema,
-} from '../../dental/schemas/dental-schemas';
+} from '../schemas/dental-schemas';
 import {
   dentalCatalogRepository,
   pricingRuleRepository,
   exchangeRateRepository,
   tenantSettingsService,
-} from '../../dental/repositories/dental-financial.repositories';
-import { financialSnapshotRepository } from '../../dental/repositories/financial-snapshot.repository';
+} from '../repositories/dental-financial.repositories';
+import { financialSnapshotRepository } from '../repositories/financial-snapshot.repository';
 
 export const dentalAdminRouter = Router();
 const tr = (req: Request): TenantRequest => req as unknown as TenantRequest;

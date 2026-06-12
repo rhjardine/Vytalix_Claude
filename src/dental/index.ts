@@ -49,3 +49,17 @@ export type { QuoteRequest, QuoteResult } from './quote.orchestrator'
 
 export { DentalPricingService, PriceQuoteSchema } from './dental-pricing.service'
 export type { PriceQuoteInput, PriceQuoteResult, TreatmentLineItem, FinancingOption } from './dental-pricing.service'
+
+// Commerce & Analytics Engines (Sprints 5/6)
+export { DentalVoucherEngine, DentalBookingEngine, dentalVoucherEngine, dentalBookingEngine } from './engines/dental-commerce.engines'
+export { dentalCommerceRouter } from './routers/dental-commerce.router'
+export { dentalAdminRouter } from './routers/dental-admin.router'
+
+// Repositories
+export { dentalCatalogRepository, pricingRuleRepository, exchangeRateRepository, tenantSettingsService } from './repositories/dental-financial.repositories'
+export { financialSnapshotRepository } from './repositories/financial-snapshot.repository'
+
+// Services
+export { auditService } from './services/audit.service'
+export { dentalMetrics } from './services/prometheus-metrics'
+

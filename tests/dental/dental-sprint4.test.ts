@@ -16,14 +16,14 @@ import {
   IssueDentalVoucherSchema,
   RedeemDentalVoucherSchema,
   CreateDentalBookingSchema,
-} from '../dental/schemas/dental-schemas';
-import { AuditService } from '../dental/audit/AuditService';
+} from '../../src/dental/schemas/dental-schemas';
+import { AuditService } from '../../src/dental/services/audit.service';
 import {
   dentalMetrics,
   renderPrometheusText,
   resetAllMetrics,
   incCounter,
-} from '../dental/metrics/PrometheusMetrics';
+} from '../../src/dental/services/prometheus-metrics';
 
 // ─── ZOD SCHEMA VALIDATION ────────────────────────────────────────────────────
 

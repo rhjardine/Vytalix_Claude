@@ -1,0 +1,823 @@
+openapi: 3.1.0
+info:
+  title: Vytalix CFE Dental API
+  version: 2.0.0
+  description: |
+    API empresarial para servicios odontológicos digitales.
+    Cubre cotización, planes de tratamiento, inventario, catálogo persistente,
+    vouchers con QR, agendamiento y reportes financieros.
+
+    **Autenticación:** `Authorization: Bearer <partner-api-key>`
+
+    **Tenant isolation:** Todos los datos están aislados por tenant vía RLS.
+    El tenant se deriva del API key — nunca se acepta como parámetro.
+
+    **Montos monetarios:** Enteros en unidades menores (centavos).
+    `800000` = $8,000.00 MXN. Los márgenes en basis points: `6000` = 60.00%.
+  contact:
+    name: Vytalix Platform Engineering
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.vytalix.com
+    description: Production
+  - url: https://staging.vytalix.com
+    description: Staging
+
+tags:
+  - name: Quotes
+    description: Cotización dental sin persistencia (Sprint 4)
+  - name: Treatment Plans
+    description: Planes de tratamiento con versionado inmutable (Sprint 4)
+  - name: Inventory
+    description: Inventario con event-sourcing (Sprint 4)
+  - name: Catalog
+    description: Catálogo persistente por tenant (Sprint 5)
+  - name: Pricing
+    description: Reglas de precio configurables (Sprint 5)
+  - name: Settings
+    description: Configuración financiera por tenant (Sprint 5)
+  - name: Analytics
+    description: Dashboard financiero (Sprint 5)
+  - name: Vouchers
+    description: Vouchers digitales con QR (Sprint 6)
+  - name: Bookings
+    description: Agendamiento dental (Sprint 6)
+  - name: Observability
+    description: Métricas Prometheus
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+
+  schemas:
+    Currency:
+      type: string
+      enum: [USD, MXN, COP, PEN, EUR]
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          description: Minor currency units (e.g. 800000 = $8,000.00 MXN)
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    MarginSnapshot:
+      type: object
+      properties:
+        grossMarginBps:  { type: integer, description: "Gross margin in basis points (6000 = 60.00%)" }
+        netMarginBps:    { type: integer }
+        materialCostBps: { type: integer }
+        laborCostBps:    { type: integer }
+        overheadCostBps: { type: integer }
+
+    TreatmentItem:
+      type: object
+      required: [treatmentCode, description, quantity, unitPrice, totalPrice]
+      properties:
+        treatmentCode:  { type: string }
+        description:    { type: string }
+        quantity:       { type: integer, minimum: 1 }
+        unitPrice:      { $ref: '#/components/schemas/Money' }
+        totalPrice:     { $ref: '#/components/schemas/Money' }
+        toothNumbers:
+          type: array
+          items: { type: integer, minimum: 11, maximum: 85 }
+          description: FDI tooth notation
+
+    DentalQuoteResult:
+      type: object
+      properties:
+        quoteId:       { type: string, format: uuid }
+        tenantId:      { type: string, format: uuid }
+        patientRef:    { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TreatmentItem' }
+        subtotal:      { $ref: '#/components/schemas/Money' }
+        discount:      { $ref: '#/components/schemas/Money' }
+        tax:           { $ref: '#/components/schemas/Money' }
+        total:         { $ref: '#/components/schemas/Money' }
+        exchangeRates:
+          type: object
+          additionalProperties: { type: number }
+        marginSnapshot: { $ref: '#/components/schemas/MarginSnapshot' }
+        validUntil:    { type: string, format: date-time }
+        correlationId: { type: string }
+        generatedAt:   { type: string, format: date-time }
+
+    TreatmentPlan:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        tenantId:         { type: string, format: uuid }
+        patientRef:       { type: string }
+        title:            { type: string }
+        description:      { type: string }
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, COMPLETED, CANCELLED, ARCHIVED]
+        currentVersionId: { type: string, format: uuid }
+        createdAt:        { type: string, format: date-time }
+        updatedAt:        { type: string, format: date-time }
+
+    TreatmentVersion:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        planId:         { type: string, format: uuid }
+        versionNumber:  { type: integer }
+        status:
+          type: string
+          enum: [DRAFT, SEALED, SUPERSEDED, REJECTED]
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TreatmentItem' }
+        subtotalAmount: { type: integer }
+        discountAmount: { type: integer }
+        taxAmount:      { type: integer }
+        totalAmount:    { type: integer }
+        currency:       { $ref: '#/components/schemas/Currency' }
+        exchangeRates:  { type: object, additionalProperties: { type: number } }
+        marginSnapshot: { $ref: '#/components/schemas/MarginSnapshot' }
+        sealedAt:       { type: string, format: date-time }
+        correlationId:  { type: string }
+        createdAt:      { type: string, format: date-time }
+
+    InventoryItem:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        sku:          { type: string }
+        name:         { type: string }
+        category:
+          type: string
+          enum: [CONSUMABLE, MATERIAL, INSTRUMENT, EQUIPMENT, PROSTHETIC, MEDICATION, OTHER]
+        unit:         { type: string }
+        currentStock: { type: integer, description: Derived from sum of all movements }
+        reorderLevel: { type: integer }
+        isActive:     { type: boolean }
+
+    InventoryMovement:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        itemId:         { type: string, format: uuid }
+        type:
+          type: string
+          enum: [ENTRY, CONSUMPTION, ADJUSTMENT_IN, ADJUSTMENT_OUT, RETURN]
+        quantity:       { type: integer, description: "Positive = inflow; negative = outflow" }
+        quantityBefore: { type: integer }
+        quantityAfter:  { type: integer }
+        reference:      { type: string }
+        performedBy:    { type: string }
+        correlationId:  { type: string }
+        createdAt:      { type: string, format: date-time }
+
+    DentalCatalogItem:
+      type: object
+      description: Public view — baseCost is never exposed to partners
+      properties:
+        code:            { type: string }
+        name:            { type: string }
+        description:     { type: string }
+        category:
+          type: string
+          enum: [CONSULTATION, RESTORATION, ENDODONTICS, PERIODONTICS,
+                 SURGERY, ORTHODONTICS, PROSTHETICS, IMPLANTS,
+                 PREVENTIVE, COSMETIC, OTHER]
+          description: |
+            Dental service category vocabulary (distinct from inventory category).
+            CONSULTATION=general/specialty visits, RESTORATION=fillings/crowns,
+            ENDODONTICS=root canals, PERIODONTICS=gum treatment,
+            SURGERY=extractions/implant placement, ORTHODONTICS=braces/aligners,
+            PROSTHETICS=bridges/dentures, IMPLANTS=full implant systems,
+            PREVENTIVE=cleanings/sealants, COSMETIC=whitening/veneers, OTHER=misc.
+        durationMinutes: { type: integer }
+        price:           { type: integer, description: Resolved final price in minor units }
+        currency:        { $ref: '#/components/schemas/Currency' }
+        isActive:        { type: boolean }
+
+    DentalVoucher:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        catalogItemCode: { type: string }
+        token:           { type: string, minLength: 64, maxLength: 64 }
+        qrPayload:       { type: string, description: base64url-encoded QR data with HMAC }
+        status:
+          type: string
+          enum: [ACTIVE, REDEEMED, EXPIRED, CANCELLED, SUSPENDED]
+        beneficiaryRef:  { type: string }
+        expiresAt:       { type: string, format: date-time }
+        priceAmount:     { type: integer }
+        priceCurrency:   { $ref: '#/components/schemas/Currency' }
+        correlationId:   { type: string }
+        createdAt:       { type: string, format: date-time }
+
+    DentalBooking:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        catalogItemCode: { type: string }
+        patientRef:      { type: string }
+        status:
+          type: string
+          enum: [REQUESTED, CONFIRMED, CHECKED_IN, COMPLETED, CANCELLED, NO_SHOW]
+        fulfillmentStatus:
+          type: string
+          enum: [PURCHASED, SCHEDULED, CONFIRMED, CHECKED_IN, COMPLETED, CANCELLED]
+        voucherId:       { type: string, format: uuid }
+        slotStart:       { type: string, format: date-time }
+        slotEnd:         { type: string, format: date-time }
+        correlationId:   { type: string }
+        createdAt:       { type: string, format: date-time }
+
+    ApiError:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          properties:
+            code:    { type: string }
+            message: { type: string }
+            fields:  { type: object, additionalProperties: { type: string } }
+
+    Meta:
+      type: object
+      properties:
+        requestId: { type: string }
+        timestamp: { type: string, format: date-time }
+        version:   { type: string }
+
+    Pagination:
+      type: object
+      properties:
+        page:       { type: integer }
+        pageSize:   { type: integer }
+        total:      { type: integer }
+        totalPages: { type: integer }
+
+security:
+  - ApiKey: []
+
+paths:
+  # ── SPRINT 4: QUOTES ────────────────────────────────────────────────────────
+
+  /api/v2/dental/quote:
+    post:
+      tags: [Quotes]
+      summary: Generate dental quote
+      description: |
+        Generates an itemised quote using tenant pricing rules. Does not persist.
+        Valid for 24 hours (validUntil in response).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patientRef, items, currency, correlationId]
+              properties:
+                patientRef:    { type: string, maxLength: 128 }
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [treatmentCode, quantity]
+                    properties:
+                      treatmentCode: { type: string, pattern: '^[A-Z0-9_]+$' }
+                      quantity:      { type: integer, minimum: 1 }
+                      toothNumbers:  { type: array, items: { type: integer } }
+                currency:      { $ref: '#/components/schemas/Currency' }
+                correlationId: { type: string, maxLength: 128 }
+              additionalProperties: false
+      responses:
+        '200':
+          description: Quote generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:    { $ref: '#/components/schemas/DentalQuoteResult' }
+                  meta:    { $ref: '#/components/schemas/Meta' }
+        '400': { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } } }
+        '422': { description: Unknown treatment code, content: { application/json: { schema: { $ref: '#/components/schemas/ApiError' } } } }
+
+  /api/v2/dental/metrics:
+    get:
+      tags: [Observability]
+      summary: Prometheus metrics scrape endpoint
+      description: Returns dental metrics in Prometheus text format 0.0.4
+      security: []
+      responses:
+        '200':
+          description: Prometheus text
+          content:
+            text/plain:
+              example: |
+                # HELP dental_quotes_created_total Total dental quotes generated
+                # TYPE dental_quotes_created_total counter
+                dental_quotes_created_total{tenant_id="t1",currency="MXN"} 42
+
+  # ── SPRINT 4: TREATMENT PLANS ────────────────────────────────────────────────
+
+  /api/v2/dental/treatment-plan:
+    post:
+      tags: [Treatment Plans]
+      summary: Create treatment plan
+      description: |
+        Generates a quote and persists a TreatmentPlan with its first DRAFT version.
+        An audit record and financial snapshot are written atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patientRef, title, items, currency, correlationId]
+              properties:
+                patientRef:    { type: string }
+                title:         { type: string, minLength: 3, maxLength: 255 }
+                description:   { type: string }
+                items:         { type: array, minItems: 1, items: { type: object } }
+                currency:      { $ref: '#/components/schemas/Currency' }
+                correlationId: { type: string }
+              additionalProperties: false
+      responses:
+        '201':
+          description: Plan created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      plan:    { $ref: '#/components/schemas/TreatmentPlan' }
+                      version: { $ref: '#/components/schemas/TreatmentVersion' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+
+  /api/v2/dental/treatment-plan/{id}:
+    get:
+      tags: [Treatment Plans]
+      summary: Get treatment plan with version history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Plan with all versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      plan:     { $ref: '#/components/schemas/TreatmentPlan' }
+                      versions:
+                        type: array
+                        items: { $ref: '#/components/schemas/TreatmentVersion' }
+        '404': { description: Not found }
+
+  /api/v2/dental/treatment-plan/{id}/seal:
+    post:
+      tags: [Treatment Plans]
+      summary: Seal current version and advance to new DRAFT
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: New DRAFT version returned }
+
+  # ── SPRINT 4: INVENTORY ──────────────────────────────────────────────────────
+
+  /api/v2/dental/inventory/items:
+    post:
+      tags: [Inventory]
+      summary: Create inventory item
+      responses:
+        '201': { description: Item created }
+
+  /api/v2/dental/inventory:
+    get:
+      tags: [Inventory]
+      summary: List inventory with current stock
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: belowReorderLevel
+          in: query
+          schema: { type: boolean }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated inventory list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:    { type: array, items: { $ref: '#/components/schemas/InventoryItem' } }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /api/v2/dental/inventory/movement:
+    post:
+      tags: [Inventory]
+      summary: Record inventory movement
+      description: |
+        Quantity is always a positive integer. Sign is derived from type:
+        ENTRY/ADJUSTMENT_IN/RETURN = +qty; CONSUMPTION/ADJUSTMENT_OUT = -qty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId, type, quantity, performedBy, correlationId]
+              properties:
+                itemId:        { type: string, format: uuid }
+                type:
+                  type: string
+                  enum: [ENTRY, CONSUMPTION, ADJUSTMENT_IN, ADJUSTMENT_OUT, RETURN]
+                quantity:      { type: integer, minimum: 1 }
+                unitCost:      { type: integer, description: Required for ENTRY }
+                currency:      { $ref: '#/components/schemas/Currency' }
+                reference:     { type: string }
+                notes:         { type: string }
+                performedBy:   { type: string }
+                correlationId: { type: string }
+              additionalProperties: false
+      responses:
+        '201':
+          description: Movement recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:    { $ref: '#/components/schemas/InventoryMovement' }
+        '409': { description: Insufficient stock }
+
+  /api/v2/dental/inventory/{itemId}/movements:
+    get:
+      tags: [Inventory]
+      summary: List movement history for an item
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200': { description: Movement list }
+
+  # ── SPRINT 5: CATALOG ADMIN ──────────────────────────────────────────────────
+
+  /api/v2/dental/admin/catalog:
+    post:
+      tags: [Catalog]
+      summary: Create catalog item (admin)
+      responses:
+        '201': { description: Item created }
+    get:
+      tags: [Catalog]
+      summary: List catalog items (admin — includes baseCost)
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [CONSULTATION, RESTORATION, ENDODONTICS, PERIODONTICS,
+                   SURGERY, ORTHODONTICS, PROSTHETICS, IMPLANTS,
+                   PREVENTIVE, COSMETIC, OTHER]
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { description: Catalog list }
+
+  /api/v2/dental/admin/pricing-rules:
+    post:
+      tags: [Pricing]
+      summary: Create pricing rule
+      description: |
+        Either catalogItemCode (item-specific) or category (category-wide) must be set.
+        Rule types — mutually exclusive, one required:
+          - marginPercent: applied to baseCost
+          - discountPercent: applied to suggestedPrice
+          - fixedPrice: overrides all
+      responses:
+        '201': { description: Rule created }
+
+  /api/v2/dental/admin/exchange-rates:
+    post:
+      tags: [Settings]
+      summary: Save exchange rate snapshot
+      responses:
+        '201': { description: Snapshot saved }
+
+  /api/v2/dental/admin/exchange-rates/latest:
+    get:
+      tags: [Settings]
+      summary: Get latest exchange rates
+      parameters:
+        - name: baseCurrency
+          in: query
+          schema: { $ref: '#/components/schemas/Currency' }
+      responses:
+        '200': { description: Latest rates }
+        '404': { description: No rates saved for this currency }
+
+  /api/v2/dental/admin/settings:
+    put:
+      tags: [Settings]
+      summary: Upsert tenant dental configuration
+      responses:
+        '200': { description: Settings saved }
+    get:
+      tags: [Settings]
+      summary: Get tenant settings (with defaults)
+      responses:
+        '200': { description: Settings }
+
+  /api/v2/dental/admin/analytics/revenue:
+    get:
+      tags: [Analytics]
+      summary: Revenue summary for a period
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: { type: string, example: "2025-10" }
+        - name: snapshotType
+          in: query
+          schema: { type: string, enum: [PLAN_VERSION, DAILY, MONTHLY, QUARTERLY, QUOTE_BATCH] }
+      responses:
+        '200':
+          description: Revenue aggregate + individual snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      period:    { type: string }
+                      aggregate:
+                        type: object
+                        properties:
+                          totalGrossRevenue: { type: integer }
+                          totalNetRevenue:   { type: integer }
+                          avgGrossMarginBps: { type: integer }
+                          avgNetMarginBps:   { type: integer }
+                          snapshotCount:     { type: integer }
+                      snapshots: { type: array }
+                      pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /api/v2/dental/admin/analytics/margin:
+    get:
+      tags: [Analytics]
+      summary: Margin analysis for a period
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Margin data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      avgGrossMarginBps: { type: integer }
+                      avgGrossMarginPct: { type: string, example: "60.00" }
+                      avgNetMarginBps:   { type: integer }
+                      avgNetMarginPct:   { type: string, example: "52.00" }
+
+  /api/v2/dental/admin/analytics/inventory:
+    get:
+      tags: [Analytics]
+      summary: Inventory analytics — low stock and movement summary
+      responses:
+        '200': { description: Inventory analytics }
+
+  # ── SPRINT 6: COMMERCE ───────────────────────────────────────────────────────
+
+  /api/v2/dental/commerce/catalog:
+    get:
+      tags: [Catalog]
+      summary: Public dental catalog with resolved prices
+      description: Returns ACTIVE items with prices — baseCost never exposed.
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [CONSULTATION, RESTORATION, ENDODONTICS, PERIODONTICS,
+                   SURGERY, ORTHODONTICS, PROSTHETICS, IMPLANTS,
+                   PREVENTIVE, COSMETIC, OTHER]
+      responses:
+        '200':
+          description: Priced catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:       { type: array, items: { $ref: '#/components/schemas/DentalCatalogItem' } }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /api/v2/dental/commerce/catalog/{code}:
+    get:
+      tags: [Catalog]
+      summary: Single catalog item with resolved price
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Item }
+        '404': { description: Not found }
+
+  /api/v2/dental/commerce/vouchers:
+    post:
+      tags: [Vouchers]
+      summary: Issue dental voucher
+      description: |
+        Issues a 256-bit token with HMAC-signed QR payload.
+        Token is valid for expiresInDays. Call after payment confirmation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogItemCode, expiresInDays, currency, correlationId]
+              properties:
+                catalogItemCode: { type: string }
+                beneficiaryRef:  { type: string }
+                expiresInDays:   { type: integer, minimum: 1, maximum: 730 }
+                currency:        { $ref: '#/components/schemas/Currency' }
+                correlationId:   { type: string }
+              additionalProperties: false
+      responses:
+        '201':
+          description: Voucher issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:    { $ref: '#/components/schemas/DentalVoucher' }
+
+  /api/v2/dental/commerce/vouchers/{token}:
+    get:
+      tags: [Vouchers]
+      summary: Check voucher status
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, minLength: 64, maxLength: 64 }
+      responses:
+        '200': { description: Voucher }
+        '404': { description: Not found }
+
+  /api/v2/dental/commerce/vouchers/redeem:
+    post:
+      tags: [Vouchers]
+      summary: Redeem dental voucher
+      description: |
+        Validates HMAC signature and marks voucher as REDEEMED.
+        Idempotent on correlationId.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, redeemedBy, channel, correlationId]
+              properties:
+                token:         { type: string, minLength: 64, maxLength: 64 }
+                redeemedBy:    { type: string }
+                locationId:    { type: string }
+                channel:
+                  type: string
+                  enum: [QR_SCAN, MANUAL, API, KIOSK]
+                correlationId: { type: string }
+              additionalProperties: false
+      responses:
+        '200': { description: Redemption result }
+        '409': { description: Already redeemed }
+        '410': { description: Expired }
+        '422': { description: Invalid or suspended }
+
+  /api/v2/dental/commerce/bookings:
+    post:
+      tags: [Bookings]
+      summary: Create dental booking
+      description: Optionally linked to a voucher. Creates in REQUESTED status.
+      responses:
+        '201': { description: Booking created }
+
+  /api/v2/dental/commerce/bookings/{id}:
+    get:
+      tags: [Bookings]
+      summary: Get booking with fulfillment status
+      description: Returns booking status plus derived fulfillmentStatus (PURCHASED→COMPLETED lifecycle)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Booking
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DentalBooking' }
+        '404': { description: Not found }
+
+  /api/v2/dental/commerce/bookings/{id}/confirm:
+    post:
+      tags: [Bookings]
+      summary: Confirm booking (REQUESTED → CONFIRMED)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Confirmed }
+        '422': { description: Invalid state transition }
+
+  /api/v2/dental/commerce/bookings/{id}/check-in:
+    post:
+      tags: [Bookings]
+      summary: Patient check-in (CONFIRMED → CHECKED_IN)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Checked in }
+
+  /api/v2/dental/commerce/bookings/{id}/complete:
+    post:
+      tags: [Bookings]
+      summary: Complete service delivery (CHECKED_IN → COMPLETED)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Completed }
+
+  /api/v2/dental/commerce/bookings/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Cancel booking
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Cancelled }
+        '422': { description: Cannot cancel in current state }
