@@ -97,12 +97,26 @@ export interface TreatmentPlan {
   tenantId: string;
   patientRef: string;
   title: string;
+  description?: string;        // ← added: used in planes/page.tsx
   status: TreatmentPlanStatus;
   currentVersion: number;
+  currentVersionId?: string;   // ← added: used in planes/page.tsx
   totalAmountCents: number;
   currency: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// TreatmentVersion — returned in getPlan() detail response
+export interface TreatmentVersion {
+  id: string;
+  versionNumber: number;
+  status: string;
+  totalAmount: number;
+  currency: string;
+  sealedAt?: string;
+  items: Array<{ description: string; quantity: number; unitPrice?: number }>;
+  createdAt: string;
 }
 
 export interface CatalogItem {
@@ -110,9 +124,11 @@ export interface CatalogItem {
   name: string;
   category: string;
   description?: string;
-  price: number;       // centavos
+  durationMinutes?: number;  // ← added: used in catalogo/page.tsx
+  price: number;             // centavos
   currency: string;
   marginBps?: number;
+  isActive?: boolean;        // ← added: used in catalogo/page.tsx
 }
 
 export interface MoneyAmount {
@@ -204,7 +220,12 @@ export async function listPlans(
   return apiFetch(`/v2/dental/plans?${qs}`);
 }
 
-export async function getPlan(planId: string): Promise<SingleResponse<TreatmentPlan>> {
+export interface PlanDetailResponse {
+  plan: TreatmentPlan;
+  versions: TreatmentVersion[];
+}
+
+export async function getPlan(planId: string): Promise<SingleResponse<PlanDetailResponse>> {
   return apiFetch(`/v2/dental/plans/${planId}`);
 }
 
@@ -212,6 +233,7 @@ export async function getPlan(planId: string): Promise<SingleResponse<TreatmentP
 
 export interface ListCatalogParams {
   category?: string;
+  page?: number;
   pageSize?: number;
 }
 
@@ -220,6 +242,7 @@ export async function listCatalog(
 ): Promise<PaginatedResponse<CatalogItem>> {
   const qs = new URLSearchParams();
   if (params.category) qs.set('category', params.category);
+  if (params.page)     qs.set('page',     String(params.page));
   if (params.pageSize) qs.set('pageSize', String(params.pageSize));
   return apiFetch(`/v2/dental/catalog?${qs}`);
 }
@@ -311,13 +334,16 @@ export async function getInventoryAnalytics(): Promise<
 // ── Tenant settings ───────────────────────────────────────────────────────────
 
 export interface TenantSettings {
-  tenantId: string;
-  clinicName: string;
-  locale: string;
+  tenantId?: string;
+  clinicName?: string;
+  locale?: string;
   defaultCurrency: string;
-  taxRate: number;          // e.g. 0.16 for 16%
-  exchangeRates: Record<string, number>;
-  updatedAt: string;
+  taxRate: number;                  // e.g. 16 (percent)
+  defaultMarginPercent: number;     // ← added: used in config/page.tsx
+  financingEnabled: boolean;        // ← added: used in config/page.tsx
+  timezone: string;                 // ← added: used in config/page.tsx
+  exchangeRates?: Record<string, number>;
+  updatedAt?: string;
 }
 
 export async function getTenantSettings(): Promise<SingleResponse<TenantSettings>> {
@@ -332,57 +358,81 @@ export async function updateTenantSettings(
 
 // ── Vouchers ──────────────────────────────────────────────────────────────────
 
-export interface Voucher {
+// DentalVoucher — aligned with dental-commerce.router.ts response shape
+export interface DentalVoucher {
   id: string;
   token: string;
-  patientRef: string;
+  patientRef?: string;
+  beneficiaryRef?: string;     // ← used in vouchers/page.tsx
+  catalogItemCode: string;     // ← used in vouchers/page.tsx
   status: string;
-  planId: string;
-  totalCents: number;
-  currency: string;
-  issuedAt: string;
+  planId?: string;
+  priceAmount: number;         // ← used in vouchers/page.tsx (centavos)
+  priceCurrency: string;       // ← used in vouchers/page.tsx
+  totalCents?: number;
+  currency?: string;
+  issuedAt?: string;
   expiresAt: string;
   redeemedAt?: string;
+  createdAt: string;           // ← used in vouchers/page.tsx
 }
 
-export async function getVoucher(token: string): Promise<SingleResponse<Voucher>> {
-  return apiFetch(`/v2/dental/vouchers/${token}`);
+/** @deprecated Use DentalVoucher. Alias kept for backward compatibility. */
+export type Voucher = DentalVoucher;
+
+export async function getVoucher(token: string): Promise<SingleResponse<DentalVoucher>> {
+  return apiFetch(`/v2/dental/commerce/vouchers/${token}`);
+}
+
+export interface RedeemVoucherInput {
+  token: string;
+  redeemedBy: string;
+  channel: string;
+  locationId?: string;
+  correlationId: string;
 }
 
 export async function redeemVoucher(
-  token: string,
-  operatorId: string
-): Promise<MutationResponse<Voucher>> {
-  return apiFetch(`/v2/dental/vouchers/${token}/redeem`, {
+  input: RedeemVoucherInput
+): Promise<MutationResponse<{ result: string; voucherId?: string }>> {
+  return apiFetch(`/v2/dental/commerce/vouchers/redeem`, {
     method: 'POST',
-    body: { operatorId, correlationId: crypto.randomUUID() },
+    body: input,
   });
 }
 
-// ── Reservations ──────────────────────────────────────────────────────────────
+// ── Bookings (Reservas) ───────────────────────────────────────────────────────
+// Aligned with /api/v2/dental/commerce/bookings/:id response
 
-export interface Reservation {
+export interface DentalBooking {
   id: string;
+  tenantId?: string;
   patientRef: string;
+  catalogItemCode: string;   // ← used in reservas/page.tsx
   status: string;
-  scheduledAt: string;
-  doctorRef: string;
-  planId?: string;
-  notes?: string;
+  fulfillmentStatus?: string;// ← used in reservas/page.tsx
+  slotStart: string;         // ← used in reservas/page.tsx
+  slotEnd: string;           // ← used in reservas/page.tsx
+  voucherId?: string;        // ← used in reservas/page.tsx
   createdAt: string;
+  updatedAt?: string;
 }
 
-export async function getReservation(
-  reservationId: string
-): Promise<SingleResponse<Reservation>> {
-  return apiFetch(`/v2/dental/reservations/${reservationId}`);
+export async function getBooking(
+  bookingId: string
+): Promise<SingleResponse<DentalBooking>> {
+  return apiFetch(`/v2/dental/commerce/bookings/${bookingId}`);
 }
+
+// Legacy alias kept for backward compatibility
+export type Reservation = DentalBooking;
+export const getReservation = getBooking;
 
 export async function updateReservationStatus(
   reservationId: string,
   status: string,
   operatorId: string
-): Promise<MutationResponse<Reservation>> {
+): Promise<MutationResponse<DentalBooking>> {
   return apiFetch(`/v2/dental/reservations/${reservationId}/status`, {
     method: 'PATCH',
     body: { status, operatorId, correlationId: crypto.randomUUID() },

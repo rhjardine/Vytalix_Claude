@@ -1,0 +1,12 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/auditoria/page": "app/auditoria/page.js",
+  "/config/page": "app/config/page.js",
+  "/cotizar/page": "app/cotizar/page.js",
+  "/catalogo/page": "app/catalogo/page.js",
+  "/page": "app/page.js",
+  "/planes/page": "app/planes/page.js",
+  "/inventario/page": "app/inventario/page.js",
+  "/reservas/page": "app/reservas/page.js",
+  "/vouchers/page": "app/vouchers/page.js"
+}

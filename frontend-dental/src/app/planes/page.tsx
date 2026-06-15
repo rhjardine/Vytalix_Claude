@@ -6,6 +6,7 @@ import {
   StatusBadge, Pagination, MoneyDisplay, Toast, type ToastType,
 } from '@/components/ui';
 import { listPlans, getPlan, type TreatmentPlan, type TreatmentVersion } from '@/lib/api/client';
+// getPlan() now returns SingleResponse<PlanDetailResponse> = { data: { plan, versions } }
 
 export default function PlanesPage() {
   const [plans, setPlans]         = useState<TreatmentPlan[]>([]);
