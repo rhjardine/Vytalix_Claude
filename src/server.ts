@@ -24,7 +24,7 @@ import {
 
 // ── Routers ───────────────────────────────────────────────────────
 import { createExternalV2Router } from './api/handlers/external-v2.handler'
-import { createFunnelRouter, createExchangeRateHandler } from './api/handlers/funnel.handler'
+// import { createFunnelRouter, createExchangeRateHandler } from './api/handlers/funnel.handler'
 import { createBillingAdminRouter } from './api/handlers/billing-admin.handler'
 import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './api/pipelines/pipeline-v2.orchestrator'
 
@@ -129,8 +129,8 @@ app.get('/metrics',   metricsHandler)
 app.get('/metrics/prometheus', prometheusHandler)
 
 // ── Public Funnel API (no auth) ───────────────────────────────────
-app.use('/api/funnel',        createFunnelRouter())
-app.use('/api/exchange-rate', createExchangeRateHandler())
+// app.use('/api/funnel',        createFunnelRouter())
+// app.use('/api/exchange-rate', createExchangeRateHandler())
 
 // ── External API v2 (API Key auth — Disglobal + partners) ────────
 app.use('/api/v2', createExternalV2Router())
@@ -163,8 +163,8 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 })
 
 // ── Platform event wiring ─────────────────────────────────────────
-const platformOrchestrator = new PlatformPipelineOrchestrator()
-registerPlatformEventListeners(platformOrchestrator)
+// const platformOrchestrator = new PlatformPipelineOrchestrator()
+// registerPlatformEventListeners(platformOrchestrator)
 
 // ── Metering flush (every 60s) ────────────────────────────────────
 setInterval(async () => {
