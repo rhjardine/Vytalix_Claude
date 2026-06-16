@@ -136,6 +136,7 @@ export type CreateInventoryItemInput = z.infer<typeof CreateInventoryItemSchema>
 export const CreateCatalogItemSchema = z.object({
   code: TreatmentCodeSchema,
   name: z.string().min(1).max(255),
+  description: z.string().max(2000).optional(),
   category: z.enum([
     'CONSULTATION', 'RESTORATION', 'ENDODONTICS', 'PERIODONTICS',
     'SURGERY', 'ORTHODONTICS', 'PROSTHETICS', 'IMPLANTS',
@@ -156,6 +157,7 @@ export const CreateCatalogItemSchema = z.object({
   );
 
 export type CreateCatalogItemInput = z.infer<typeof CreateCatalogItemSchema>;
+
 
 // ─── Pricing rule schemas (Sprint 5) ─────────────────────────────────────────
 

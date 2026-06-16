@@ -14,7 +14,7 @@
 import { Router, Request, Response } from 'express'
 import { z }                         from 'zod'
 import { DentalCostEngine, CostEstimateInput, TREATMENT_CATALOG, TreatmentCode } from '../../dental/dental-cost.engine'
-import { DentalPricingService, PriceQuoteSchema, createTreatmentSnapshot } from '../../dental/dental-pricing.service'
+import { DentalPricingService, PriceQuoteSchema } from '../../dental/dental-pricing.service'
 import { requireApiKey }             from '../middlewares/api-key.middleware'
 import { logger }                    from '../../platform/logger'
 import { getDb }                     from '../../platform/db'
@@ -125,18 +125,18 @@ export function createDentalRouter(): Router {
   })
 
   // ── POST /dental/treatment-snapshot ─────────────────────────────
-  router.post('/treatment-snapshot', requireApiKey('dental:write'), async (req: Request, res: Response) => {
-    const cid      = req.correlationId
-    const tenantId = (req as any).apiKeyCtx!.tenantId
-    const body     = validate(SnapshotSchema, req.body, res, cid)
-    if (!body) return
-
-    try {
-      const snapshot = await createTreatmentSnapshot({ ...body, tenantId })
-      return res.status(201).json({ ...snapshot, correlationId: cid })
-    } catch (err: any) {
-      return res.status(err.statusCode ?? 500).json({ type: 'https://api.vytalix.health/errors/snapshot-error', title: 'Snapshot Error', status: err.statusCode ?? 500, detail: err.message, correlationId: cid })
-    }
+  // NOTE: This legacy handler is unmounted in server.ts. createTreatmentSnapshot
+  // was never exported from dental-pricing.service. Stubbed as 501 to unblock
+  // TypeScript compilation. Route is superseded by /api/v2/dental/core/quotes.
+  router.post('/treatment-snapshot', requireApiKey('dental:write'), (req: Request, res: Response) => {
+    const cid = req.correlationId
+    return res.status(501).json({
+      type: 'https://api.vytalix.health/errors/501',
+      title: 'Not Implemented',
+      status: 501,
+      detail: 'Use POST /api/v2/dental/core/quotes instead',
+      correlationId: cid,
+    })
   })
 
   // ── GET /dental/snapshots/:id ────────────────────────────────────
