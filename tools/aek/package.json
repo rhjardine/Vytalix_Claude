@@ -1,0 +1,17 @@
+{
+  "name": "@vytalix/aek",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Architecture Analysis Engine for ADR-002 dependency import checks.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "aek:analyze": "pnpm run build && node dist/cli/index.js"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "glob": "^10.4.5",
+    "ts-morph": "^23.0.0",
+    "typescript": "^5.3.3"
+  }
+}
