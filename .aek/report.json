@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-06-20T02:39:51.152Z",
+  "timestamp": "2026-06-20T15:59:27.123Z",
   "rules": [
     {
       "id": "RULE-DI-001",
       "adr": "ADR-002",
-      "description": "External modules must use approved dental barrel exports instead of importing dental internals directly."
+      "description": "External modules must use approved dental barrel exports instead of importing dental internals directly. The composition root (src/server.ts) may import dental HTTP routers directly."
     },
     {
       "id": "RULE-DI-002",
@@ -17,46 +17,5 @@
       "description": "Core and longevity bounded contexts must not import dental internals."
     }
   ],
-  "findings": [
-    {
-      "ruleId": "RULE-DI-001",
-      "adr": "ADR-002",
-      "severity": "error",
-      "message": "External module imports dental internals directly; use the approved dental barrel export.",
-      "from": "src/api/handlers/dental.handler.ts",
-      "to": "src/dental/dental-cost.engine.ts"
-    },
-    {
-      "ruleId": "RULE-DI-001",
-      "adr": "ADR-002",
-      "severity": "error",
-      "message": "External module imports dental internals directly; use the approved dental barrel export.",
-      "from": "src/api/handlers/dental.handler.ts",
-      "to": "src/dental/dental-pricing.service.ts"
-    },
-    {
-      "ruleId": "RULE-DI-001",
-      "adr": "ADR-002",
-      "severity": "error",
-      "message": "External module imports dental internals directly; use the approved dental barrel export.",
-      "from": "src/server.ts",
-      "to": "src/dental/routers/dental-admin.router.ts"
-    },
-    {
-      "ruleId": "RULE-DI-001",
-      "adr": "ADR-002",
-      "severity": "error",
-      "message": "External module imports dental internals directly; use the approved dental barrel export.",
-      "from": "src/server.ts",
-      "to": "src/dental/routers/dental-commerce.router.ts"
-    },
-    {
-      "ruleId": "RULE-DI-001",
-      "adr": "ADR-002",
-      "severity": "error",
-      "message": "External module imports dental internals directly; use the approved dental barrel export.",
-      "from": "src/server.ts",
-      "to": "src/dental/routers/dental-core.router.ts"
-    }
-  ]
+  "findings": []
 }

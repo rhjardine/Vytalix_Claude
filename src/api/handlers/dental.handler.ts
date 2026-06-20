@@ -13,8 +13,8 @@
 
 import { Router, Request, Response } from 'express'
 import { z }                         from 'zod'
-import { DentalCostEngine, CostEstimateInput, TREATMENT_CATALOG, TreatmentCode } from '../../dental/dental-cost.engine'
-import { DentalPricingService, PriceQuoteSchema } from '../../dental/dental-pricing.service'
+import { DentalCostEngine, CostEstimateInput, TREATMENT_CATALOG, TreatmentCode } from '../../dental'
+import { DentalPricingService, PriceQuoteSchema } from '../../dental'
 import { requireApiKey }             from '../middlewares/api-key.middleware'
 import { logger }                    from '../../platform/logger'
 import { getDb }                     from '../../platform/db'

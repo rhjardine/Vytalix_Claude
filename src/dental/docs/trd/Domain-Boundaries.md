@@ -99,6 +99,7 @@ Definir con precisión los bounded contexts del ecosistema Vytalix, sus responsa
 - El dominio dental es una vertical satélite autónoma. No puede modificar el Core Clinical Domain.
 - `src/dental/index.ts` es el único punto de entrada para importaciones externas al dominio dental.
 - Ningún archivo externo importa directamente de `src/dental/*.engine.ts` ni de `src/dental/repositories/`.
+- **Excepción Composition Root:** `src/server.ts` actúa como Composition Root y puede importar routers HTTP directamente (`src/dental/routers/*.router.ts`) para montarlos. Esto no aplica a handlers ni a lógica de dominio, que sí deben consumir el barrel.
 - Los costos base (`baseCost`) nunca se exponen a socios externos. Solo se expone el precio resuelto.
 - Los montos monetarios se almacenan en unidades menores (centavos enteros). Prohibidos los valores decimales en base de datos.
 
