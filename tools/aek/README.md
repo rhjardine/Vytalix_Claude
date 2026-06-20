@@ -57,6 +57,48 @@ Optional flags:
 pnpm aek:analyze -- --root ../.. --out ../../.aek/report.json
 ```
 
+## Architecture Gate
+
+The gate compares actual findings against a declared baseline to produce a binary PASS/FAIL signal.
+
+| File | Purpose |
+|---|---|
+| `.aek/baseline.json` | Declares the maximum allowed findings (`expectedFindings`) |
+| `.aek/report.json` | Written by `aek:analyze`; contains the actual findings |
+
+**Run the gate:**
+
+```bash
+# From repo root
+pnpm aek:check
+
+# Or directly from tools/aek
+pnpm aek:check
+```
+
+`aek:check` always runs the full analysis first, then evaluates the baseline. The exit code reflects the gate result — not whether findings exist.
+
+**PASS/FAIL criteria:**
+
+```
+actual findings <= expectedFindings  →  PASS  (exit 0)
+actual findings >  expectedFindings  →  FAIL  (exit 1)
+```
+
+**Raising the baseline** (document the exemption before committing):
+
+```json
+{ "expectedFindings": 2 }
+```
+
+**Tightening the baseline** (after resolving technical debt):
+
+```json
+{ "expectedFindings": 0 }
+```
+
+---
+
 ## Example report
 
 ```json
