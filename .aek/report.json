@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-06-20T02:39:51.152Z",
+  "rules": [
+    {
+      "id": "RULE-DI-001",
+      "adr": "ADR-002",
+      "description": "External modules must use approved dental barrel exports instead of importing dental internals directly."
+    },
+    {
+      "id": "RULE-DI-002",
+      "adr": "ADR-002",
+      "description": "Dental bounded context must not import core or longevity bounded contexts."
+    },
+    {
+      "id": "RULE-DI-003",
+      "adr": "ADR-002",
+      "description": "Core and longevity bounded contexts must not import dental internals."
+    }
+  ],
+  "findings": [
+    {
+      "ruleId": "RULE-DI-001",
+      "adr": "ADR-002",
+      "severity": "error",
+      "message": "External module imports dental internals directly; use the approved dental barrel export.",
+      "from": "src/api/handlers/dental.handler.ts",
+      "to": "src/dental/dental-cost.engine.ts"
+    },
+    {
+      "ruleId": "RULE-DI-001",
+      "adr": "ADR-002",
+      "severity": "error",
+      "message": "External module imports dental internals directly; use the approved dental barrel export.",
+      "from": "src/api/handlers/dental.handler.ts",
+      "to": "src/dental/dental-pricing.service.ts"
+    },
+    {
+      "ruleId": "RULE-DI-001",
+      "adr": "ADR-002",
+      "severity": "error",
+      "message": "External module imports dental internals directly; use the approved dental barrel export.",
+      "from": "src/server.ts",
+      "to": "src/dental/routers/dental-admin.router.ts"
+    },
+    {
+      "ruleId": "RULE-DI-001",
+      "adr": "ADR-002",
+      "severity": "error",
+      "message": "External module imports dental internals directly; use the approved dental barrel export.",
+      "from": "src/server.ts",
+      "to": "src/dental/routers/dental-commerce.router.ts"
+    },
+    {
+      "ruleId": "RULE-DI-001",
+      "adr": "ADR-002",
+      "severity": "error",
+      "message": "External module imports dental internals directly; use the approved dental barrel export.",
+      "from": "src/server.ts",
+      "to": "src/dental/routers/dental-core.router.ts"
+    }
+  ]
+}
