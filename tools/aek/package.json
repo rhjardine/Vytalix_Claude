@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "aek:analyze": "pnpm run build && node dist/cli/index.js"
+    "aek:analyze": "pnpm run build && node dist/cli/index.js",
+    "aek:ci": "pnpm run build && node dist/cli/ci-check.js"
   },
   "dependencies": {
     "commander": "^12.1.0",
