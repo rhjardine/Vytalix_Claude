@@ -73,10 +73,10 @@ The gate compares actual findings against a declared baseline to produce a binar
 pnpm aek:check
 
 # Or directly from tools/aek
-pnpm aek:check
+pnpm aek:analyze
 ```
 
-`aek:check` always runs the full analysis first, then evaluates the baseline. The exit code reflects the gate result — not whether findings exist.
+A single unified CLI (`dist/cli/index.js`) runs the full flow in order: dependency analysis → rule engine → baseline check → final exit code. Both `aek:check` (root) and `aek:analyze` (tools/aek) execute this exact same flow, so there is zero divergence. The exit code reflects the gate result — not whether findings exist.
 
 **PASS/FAIL criteria:**
 
