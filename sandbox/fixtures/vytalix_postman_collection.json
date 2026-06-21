@@ -1,0 +1,68 @@
+{
+  "info": {
+    "name": "Vytalix Insurtech API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Assessment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assessments",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"123\",\n  \"channel\": \"disglobal_app\",\n  \"consentAccepted\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "Facial Scan",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assessments/{{assessmentId}}/scan"
+      }
+    },
+    {
+      "name": "Questionnaire",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assessments/{{assessmentId}}/questionnaire"
+      }
+    },
+    {
+      "name": "Evaluate Risk",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assessments/{{assessmentId}}/evaluate"
+      }
+    },
+    {
+      "name": "Create Appointment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/appointments"
+      }
+    },
+    {
+      "name": "Payment Intent",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/payments/intent"
+      }
+    },
+    {
+      "name": "Payment Webhook",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/webhooks/disglobal/payment-confirmed"
+      }
+    },
+    {
+      "name": "Activate Service",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/services/activate"
+      }
+    }
+  ]
+}
