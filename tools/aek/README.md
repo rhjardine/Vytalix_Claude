@@ -123,3 +123,20 @@ actual findings >  expectedFindings  →  FAIL  (exit 1)
   ]
 }
 ```
+
+## AEK Governance Workflow
+
+AEK runs automatically on every Pull Request and push to `main` / `adr/**` via `.github/workflows/aek-governance.yml`.
+
+**Local execution** (same flow CI runs):
+```bash
+pnpm aek:check        # from repo root
+```
+
+**CI execution**: GitHub Actions calls `pnpm aek:check`, which delegates to the unified AEK runner (analyzer → rules → policy → baseline gate).
+
+**PASS** — `AEK exit code 0`: findings ≤ `expectedFindings` in `.aek/baseline.json`. PR proceeds normally.
+
+**FAIL** — `AEK exit code 1`: findings exceed baseline. GitHub blocks the PR. The developer must either resolve the architectural violation or update the baseline with documented justification.
+
+No AEK internals are invoked directly from CI. The single entry point is `pnpm aek:check`.
