@@ -28,7 +28,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
     "typecheck": "tsc --noEmit --project tsconfig.server.json",
-    "aek:check": "pnpm --dir tools/aek aek:analyze"
+    "aek:check": "pnpm --dir tools/aek aek:analyze",
+    "sandbox:test": "vitest run sandbox/tests"
   },
   "dependencies": {
     "@prisma/client": "^5.7.0",
