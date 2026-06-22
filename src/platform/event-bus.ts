@@ -97,6 +97,18 @@ export interface RecommendationReviewedEvent extends BaseEvent {
   }
 }
 
+export interface PaymentConfirmedEvent extends BaseEvent {
+  readonly eventType: 'PaymentConfirmed'
+  readonly payload: {
+    readonly intentId: string
+    readonly subjectRef: string
+    readonly amount: number
+    readonly currency: string
+    readonly product: string
+    readonly metadata: Record<string, string>
+  }
+}
+
 // Union type — exhaustive discriminated union
 export type VytalixEvent =
   | PatientCreatedEvent
@@ -105,6 +117,7 @@ export type VytalixEvent =
   | DecisionGeneratedEvent
   | RiskScoreComputedEvent
   | RecommendationReviewedEvent
+  | PaymentConfirmedEvent
 
 export type VytalixEventType = VytalixEvent['eventType']
 
@@ -242,6 +255,9 @@ export const publish = {
 
   recommendationReviewed: (base: EventBase, payload: RecommendationReviewedEvent['payload']) =>
     eventBus.publish<RecommendationReviewedEvent>({ eventType: 'RecommendationReviewed', ...base, payload }),
+
+  paymentConfirmed: (base: EventBase, payload: PaymentConfirmedEvent['payload']) =>
+    eventBus.publish<PaymentConfirmedEvent>({ eventType: 'PaymentConfirmed', ...base, payload }),
 }
 
 // ─────────────────────────────────────────────────────────────────

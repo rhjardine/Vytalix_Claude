@@ -18,6 +18,7 @@ import { z, ZodError }       from 'zod'
 import { randomUUID, createHash } from 'crypto'
 import { getDb }             from '../../platform/db'
 import { logger }            from '../../platform/logger'
+import { analyzeFace }       from '../../longevity/facial-analysis.service'
 
 // ─── Tenant por defecto para el funnel público ────────────────────
 // En multi-tenant real esto vendría del API key registry
@@ -289,22 +290,21 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
   // Hash de la imagen para auditoría — imagen NO se almacena
   const imageHash = createHash('sha256').update(imageBase64).digest('hex')
 
-  const provider = process.env.VISION_PROVIDER ?? 'mock'
   let estimatedAge: number
   let confidence: number
+  let analysisProvider: string
 
-  if (provider === 'mock') {
-    const result = deterministicAge(imageBase64)
-    estimatedAge = result.age
-    confidence   = Math.round(result.confidence * 100) / 100
-  } else {
-    // TODO: integrar proveedor real (openai | azure | aws)
-    // Retornar 501 hasta que se configure el proveedor
-    logger.warn({ provider, correlationId: id }, 'Vision provider not implemented')
-    return problem(res, 501,
-      `El proveedor de visión '${provider}' no está configurado aún. ` +
-      `Configura VISION_PROVIDER=mock para desarrollo.`, id)
+  try {
+    const analysis = await analyzeFace({ imageBase64, correlationId: id })
+    estimatedAge     = analysis.estimatedAge
+    confidence       = analysis.confidence
+    analysisProvider = analysis.provider
+  } catch (err: any) {
+    logger.warn({ err, correlationId: id }, 'Facial analysis failed')
+    return problem(res, err.statusCode ?? 500, err.message, id)
   }
+
+  const provider = analysisProvider
 
   const db       = getDb()
   const tenantId = DEFAULT_TENANT()
