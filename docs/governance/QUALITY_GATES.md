@@ -29,10 +29,51 @@
 
 | Workflow | Propósito |
 |---|---|
-| `.github/workflows/aek-governance.yml` | Ejecuta `pnpm aek:check` en PR/push a `main` y `adr/**` (Gate G1) |
-| `.github/workflows/sandbox-ci.yml` | Ejecuta `pnpm sandbox:test` (Gate G6) |
+| `.github/workflows/ci.yml` | **Pipeline unificado (Sprint E1)** — 10 stages en PR/push a `main` y `adr/**` |
+| `.github/workflows/aek-governance.yml` | Gate AEK dedicado (G1) — solapa con stage 8 de `ci.yml` (ver SPRINT_E1_REPORT §Repository Health) |
+| `.github/workflows/sandbox-ci.yml` | Gate sandbox dedicado (G6) — solapa con stage 4 de `ci.yml` |
 
 > El detalle de los workflows es Nivel 1 (los archivos YAML en `.github/workflows/`). Esta tabla referencia; el archivo prevalece.
+
+### 2.1 Pipeline unificado — clasificación de stages
+
+`ci.yml` ejecuta los 10 stages en orden. La clasificación distingue gates **bloqueantes** (fallan el merge) de **advisory** (ejecutan y reportan, sin bloquear). La razón de cada advisory es deuda pre-existente fuera del alcance de E1 (ver SPRINT_E1_REPORT.md).
+
+| # | Stage | Comando | Clase |
+|---|---|---|---|
+| 1 | Install | `pnpm install` | infra |
+| 2 | Type Check | `pnpm typecheck` | **Advisory** — breakage pre-existente en `src/vertical2/` |
+| 3 | Build | `pnpm api:build` | **Advisory** — mismo breakage |
+| 4 | Vitest (sandbox) | `pnpm sandbox:test` | **BLOQUEANTE** |
+| 4b | Vitest (full) | `pnpm test` | **Advisory** — requiere Postgres + Redis + seed |
+| 5 | Coverage | `pnpm test:coverage` | **Advisory** — depende de infra del full suite |
+| 6 | Prisma Validate | `pnpm exec prisma validate` | **BLOQUEANTE** |
+| 7 | OpenAPI | `npx @redocly/cli lint` | **Advisory** — tooling no adoptado (Task 5) |
+| 8 | AEK | `pnpm aek:check` | **BLOQUEANTE** — 0 findings |
+| 9 | ESLint | `pnpm lint` | **Advisory** — sin config ESLint committeada |
+| 10 | Upload Reports | artifacts | infra (`if: always()`) |
+
+### 2.2 Comando único de CI
+
+Los gates **bloqueantes** se ejecutan localmente con un solo comando (reutiliza scripts existentes):
+
+```bash
+npm run ci      # = sandbox:test + prisma validate + aek:check
+make ci         # idéntico, vía Makefile
+make ci-full    # incluye stages advisory (typecheck, build, full tests, lint)
+```
+
+## 2.3 Requisitos oficiales de merge (branch protection)
+
+Configuración recomendada de *branch protection* para `main` y `adr/**`:
+
+- **Required status checks** (bloqueantes): `Quality Gates` (job de `ci.yml`). Dentro del job, los stages bloqueantes (4, 6, 8) hacen fallar el check.
+- **Require a pull request before merging** con al menos 1 aprobación.
+- **Require review from Code Owners** (ver `.github/CODEOWNERS`).
+- **Require conversation resolution** antes del merge.
+- **Require branches to be up to date** antes del merge.
+
+> Los stages advisory NO se marcan como required hasta que su deuda se resuelva (ver SPRINT_E1_REPORT.md → Deferred Architectural Decisions / E2).
 
 ## 3. AEK como gate primario de arquitectura
 

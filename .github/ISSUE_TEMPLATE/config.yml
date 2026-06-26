@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/rhjardine/vytalix_claude/security/advisories/new
+    about: "Do NOT file public issues for vulnerabilities. Use private reporting — see .github/SECURITY.md"
+  - name: Governance & architecture docs
+    url: https://github.com/rhjardine/vytalix_claude/blob/adr/baseline-2026/docs/governance/README.md
+    about: "Read the governance index, ADRs, and quality gates before opening process/architecture issues."

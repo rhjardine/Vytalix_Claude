@@ -81,7 +81,20 @@ Este directorio es la **capa de gobernanza corporativa** de Vytalix: una capa de
 | Failure Runbook | [FAILURE_RUNBOOK.md](../FAILURE_RUNBOOK.md) |
 | Disglobal Pilot Readiness | [DISGLOBAL_PILOT_READINESS.md](../DISGLOBAL_PILOT_READINESS.md) |
 
-## 7. Reglas del repositorio
+## 7. Plataforma de ingeniería (CI / GitHub governance)
+
+Automatización de gates de calidad introducida en Sprint E1 (ver [SPRINT_E1_REPORT.md](../SPRINT_E1_REPORT.md)):
+
+| Artefacto | Propósito |
+|---|---|
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | Pipeline unificado de 10 stages |
+| [.github/CODEOWNERS](../../.github/CODEOWNERS) | Revisores requeridos por path |
+| [.github/PULL_REQUEST_TEMPLATE.md](../../.github/PULL_REQUEST_TEMPLATE.md) | Checklist de PR (gates + invariantes) |
+| [.github/CONTRIBUTING.md](../../.github/CONTRIBUTING.md) | Proceso de contribución |
+| [.github/SECURITY.md](../../.github/SECURITY.md) | Política de seguridad y reporte |
+| Comando único | `npm run ci` / `make ci` (gates bloqueantes) |
+
+## 8. Reglas del repositorio
 
 Las reglas de qué entra en cada zona, dependencias permitidas/prohibidas, cuarentena, revisión y publicación son normativas en [Repository-Governance.md](../../src/dental/docs/trd/Repository-Governance.md) y [Domain-Boundaries.md](../../src/dental/docs/trd/Domain-Boundaries.md).
 

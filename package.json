@@ -29,7 +29,8 @@
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
     "typecheck": "tsc --noEmit --project tsconfig.server.json",
     "aek:check": "pnpm --dir tools/aek aek:analyze",
-    "sandbox:test": "vitest run sandbox/tests"
+    "sandbox:test": "vitest run sandbox/tests",
+    "ci": "pnpm sandbox:test && DATABASE_URL=${DATABASE_URL:-postgresql://localhost:5432/ci} pnpm exec prisma validate && pnpm aek:check"
   },
   "dependencies": {
     "@prisma/client": "^5.7.0",
