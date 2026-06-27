@@ -11,7 +11,8 @@ name: CI Pipeline
 #
 # BLOCKING  (fail the pipeline): Sandbox tests · Prisma Validate · AEK
 # ADVISORY  (run + report, non-blocking, pre-existing/out-of-scope):
-#   Type Check, Build  → orphaned modules in src/vertical2/ (forbidden to fix)
+#   Type Check, Build  → pre-existing type errors in production code (TD-14);
+#                         src/vertical2 removed in E3-B (TD-01 resolved)
 #   Full Vitest, Coverage → require Postgres + Redis services + seed (E2)
 #   ESLint             → no ESLint config committed (E2)
 #   OpenAPI            → no validation tooling committed (Task 5 → recommend E2)
@@ -64,7 +65,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
         working-directory: tools/aek
 
-      # ── 2. Type Check (ADVISORY — pre-existing src/vertical2 breakage) ──
+      # ── 2. Type Check (ADVISORY — pre-existing production type errors, TD-14) ──
       - name: Type Check
         id: typecheck
         continue-on-error: true
