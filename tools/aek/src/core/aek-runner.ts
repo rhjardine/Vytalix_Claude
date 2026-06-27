@@ -29,6 +29,10 @@ import type { PolicyResult } from '../policy/aek-policy-engine';
 import { ruleDi001 } from '../rules/adr-002/rule-di-001';
 import { ruleDi002 } from '../rules/adr-002/rule-di-002';
 import { ruleDi003 } from '../rules/adr-002/rule-di-003';
+// AEK v1.1 — independent governance layer (additive, WARNING-only)
+import { RepositoryScanner } from '../governance/analyzers/repository-scanner';
+import { GovernanceEngine } from '../governance/governance-engine';
+import { buildHealthReport } from '../governance/health-report';
 
 export interface AekRunOptions {
   root?: string;
@@ -67,13 +71,24 @@ export async function runAek(options: AekRunOptions): Promise<AekRunResult> {
   const context = new AnalysisContext(repositoryRoot, dependencyGraph);
   const engineResult = new RuleEngine([ruleDi001, ruleDi002, ruleDi003]).evaluate(context);
 
+  // 2b. Governance layer — AEK v1.1 (independent, WARNING-only).
+  //     Runs separately from the ADR-002 RuleEngine and is NEVER read by the
+  //     policy gate, so it cannot affect PASS/FAIL or the exit code.
+  const snapshot = new RepositoryScanner(repositoryRoot).scan();
+  const governance = new GovernanceEngine().evaluate({ repositoryRoot, dependencyGraph, snapshot });
+  const health = buildHealthReport(engineResult.findings.length, governance.findings);
+
   const report: JsonReport = {
     timestamp: new Date().toISOString(),
     rules: engineResult.rules,
     findings: engineResult.findings,
+    governance,
+    health,
   };
 
-  // 3. Policy layer — validate baseline (schema) + select strategy (registry)
+  // 3. Policy layer — validate baseline (schema) + select strategy (registry).
+  //    NOTE: evaluates engineResult (ADR-002 findings) ONLY. Governance
+  //    findings are intentionally excluded from the gate.
   const baseline = parseBaseline(JSON.parse(fs.readFileSync(baselinePath, 'utf8')));
   const policy = selectPolicy(baseline.mode).evaluate(engineResult, baseline);
 

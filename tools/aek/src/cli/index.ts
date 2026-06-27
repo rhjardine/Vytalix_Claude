@@ -23,6 +23,15 @@ async function main(): Promise<void> {
   process.stdout.write(`AEK analysis complete. Report written to ${path.relative(process.cwd(), reportPath)}\n`);
 
   process.stdout.write(`${policy.reason}\n`);
+
+  // Advisory governance health summary (AEK v1.1). Never affects exit code.
+  if (report.health) {
+    const warnings = report.governance?.findings.length ?? 0;
+    process.stdout.write(
+      `AEK Governance Health (advisory) — overall ${report.health.overall.score}/100 (${report.health.overall.status}); ${warnings} warning(s)\n`,
+    );
+  }
+
   process.exitCode = policy.exitCode;
 }
 

@@ -27,16 +27,28 @@
 - Convertir aislamiento experimental en invariante ejecutable.
 - Promover gates advisory a bloqueantes donde la deuda esté resuelta.
 
+### E3-A — Executable Governance ✅ ENTREGADO (ver [SPRINT_E3_REPORT.md](./SPRINT_E3_REPORT.md))
+
+Sub-fase de gobernanza ejecutable, completada sin tocar producción:
+- ✅ **AEK v1.1:** RULE-ISO-001 (experimental isolation), RULE-HYG-001 (hygiene), RULE-DOC-001 (mandatory docs), RULE-ADR-001 (ADR integrity) — todas WARNING-only.
+- ✅ Reporte AEK enriquecido con 6 dimensiones de salud + overall (82/100 OBSERVE).
+- ✅ Integradas a CI (`ci.yml` stage 8b advisory). DI-001/002/003 y exit code intactos.
+
+### E3-B — Platform Hardening (pendiente)
+
+**Objetivos**
+- Resolver deuda **P0/P1** de mayor impacto en la integridad del baseline.
+- Promover reglas de gobernanza advisory → bloqueantes donde la deuda esté resuelta.
+
 **Alcance**
-1. **TD-01 (P0):** decidir destino de `src/vertical2/` (ADR-009/012: cuarentena, `legacy/`, o completar módulos) → habilita Type Check/Build verdes.
-2. **AEK v1.1:** regla de *experimental isolation* (prohibir import de `vertical2`/`legacy` desde producción).
-3. **AEK v1.2:** analyzer de higiene de repositorio (TD-05).
-4. **TD-02:** service containers (Postgres+Redis) + migraciones + seed en CI → full Vitest/Coverage bloqueantes.
-5. **TD-03:** ESLint flat config + baseline.
+1. **TD-01 (P0):** decidir destino de `src/vertical2/` (ADR-009/012: cuarentena, `legacy/`, o completar módulos) → habilita Type Check/Build verdes y permite promover RULE-ISO-001 a `error`.
+2. **TD-02:** service containers (Postgres+Redis) + migraciones + seed en CI → full Vitest/Coverage bloqueantes.
+3. **TD-03:** ESLint flat config + baseline.
+4. **TD-05:** actuar sobre los archivos sueltos en raíz que RULE-HYG-001 ya detecta.
 
 **Dependencias:** decisión de arquitecto sobre TD-01; infraestructura de CI.
-**Riesgos:** resolver TD-01 podría tocar `src/` (requiere ADR explícito; fuera de sprints de gobernanza puros).
-**Exit criteria:** Type Check/Build/Tests bloqueantes y verdes; `vertical2`/`legacy` aislados por AEK; ESLint con baseline activo.
+**Riesgos:** resolver TD-01/TD-05 toca `src/`/raíz (requiere sprint de implementación dedicado; fuera de sprints de gobernanza puros).
+**Exit criteria:** Type Check/Build/Tests bloqueantes y verdes; RULE-ISO-001 promovida a `error`; ESLint con baseline activo; higiene de raíz resuelta.
 
 ---
 

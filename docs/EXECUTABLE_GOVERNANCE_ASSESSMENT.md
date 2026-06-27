@@ -16,35 +16,42 @@
 
 | Atributo | Valor |
 |---|---|
-| Reglas activas | RULE-DI-001, RULE-DI-002, RULE-DI-003 (todas ADR-002) |
-| Findings | 0 |
-| Scope de análisis | `src/**/*.{ts,tsx}` (dependency graph) |
-| Componentes | `analyzers/dependency-graph`, `core`, `policy/registry`, `rules/adr-002`, `reporters`, `cli` |
-| Integración CI | `ci.yml` (stage 8) + `aek-governance.yml` |
+| Versión AEK | **v1.1** (Sprint E3-A — capa de gobernanza añadida) |
+| Reglas de arquitectura (bloqueantes) | RULE-DI-001, RULE-DI-002, RULE-DI-003 (ADR-002) — 0 findings |
+| Reglas de gobernanza (WARNING-only) | **RULE-ISO-001, RULE-HYG-001, RULE-DOC-001, RULE-ADR-001** |
+| Scope de análisis | `src/**/*.{ts,tsx}` (dependency graph) + filesystem snapshot (gobernanza) |
+| Componentes | `analyzers/dependency-graph`, `core`, `policy/registry`, `rules/adr-002`, `reporters`, `cli`, **`governance/` (analyzers + rules + engine + health-report)** |
+| Integración CI | `ci.yml` (stage 8 bloqueante + stage 8b governance health advisory) + `aek-governance.yml` |
+| Salud de gobernanza (E3-A) | Overall 82/100 (OBSERVE); 13 warnings — arquitectura/aislamiento/docs en 100 |
+
+> **Separación de responsabilidades (E3-A):** las reglas de gobernanza son WARNING-only y **nunca** son leídas por el policy gate (que solo cuenta los findings ADR-002). El exit code y el baseline certificado BC-1 permanecen intactos.
 
 ## 2. Clasificación de reglas de gobernanza
 
 ### 2.1 Already Automated ✅
-| Regla | Mecanismo |
-|---|---|
-| Aislamiento de dominio (ADR-002) | AEK RULE-DI-001/002/003 |
-| Composition Root exemption | AEK RULE-DI-001 |
-| Aislamiento dental ↔ core/longevity (ADR-007) | AEK RULE-DI-002/003 |
-| Gate de arquitectura en PR | CI (AEK stage, bloqueante) |
-| Suite determinista de integración | `sandbox:test` (bloqueante) |
-| Validez de esquema Prisma | `prisma validate` (bloqueante) |
+| Regla | Mecanismo | Severidad |
+|---|---|---|
+| Aislamiento de dominio (ADR-002) | AEK RULE-DI-001/002/003 | error (bloqueante) |
+| Composition Root exemption | AEK RULE-DI-001 | error (bloqueante) |
+| Aislamiento dental ↔ core/longevity (ADR-007) | AEK RULE-DI-002/003 | error (bloqueante) |
+| Gate de arquitectura en PR | CI (AEK stage, bloqueante) | error |
+| Suite determinista de integración | `sandbox:test` (bloqueante) | error |
+| Validez de esquema Prisma | `prisma validate` (bloqueante) | error |
+| **Experimental isolation (E3-A)** | **AEK RULE-ISO-001** (prod ↛ `vertical2`/`legacy`) | **warning** |
+| **Repository hygiene (E3-A)** | **AEK RULE-HYG-001** (archivos sueltos en raíz) | **warning** |
+| **Mandatory governance docs (E3-A)** | **AEK RULE-DOC-001** (presencia de docs canónicos) | **warning** |
+| **ADR integrity (E3-A)** | **AEK RULE-ADR-001** (doc/estado/drift nombre-título) | **warning** |
 
 ### 2.2 Can Be Automated 🟡 (no invasivo, sin tocar análisis de código productivo)
 | Regla / política | Enforcement propuesto | Esfuerzo |
 |---|---|---|
-| **Repository topology validation** | Checker que valida el árbol contra `REPOSITORY_TOPOLOGY.md` (zonas esperadas, no archivos sueltos en raíz) | Bajo |
-| **Repository hygiene** | Lint de archivos prohibidos en raíz (`*.diff`, `debug_*`, `refactor*`, `fix-imports*`, `payload.json`) | Bajo |
-| **Experimental isolation** | Verificar que `src/server.ts` y dominios productivos NO importan `src/vertical2/` ni `src/legacy/` | Medio (extensión del dependency graph existente) |
-| **ADR integrity** | Validar que cada carpeta ADR tiene `ADR-NNN.md`, estado declarado, y que nombre de carpeta ≈ título (detecta TD-09) | Bajo |
+| **Repository topology validation** | Checker que valida el árbol contra `REPOSITORY_TOPOLOGY.md` (zonas esperadas) | Bajo |
 | **Documentation consistency** | Link-checker de rutas relativas en `docs/governance/` (detecta enlaces rotos) | Bajo |
 | **Baseline validation** | Verificar presencia/coherencia de los documentos de baseline (manifest, topology, matrix) | Bajo |
 | **OpenAPI validation** | Adoptar Redocly/Spectral committeado + `oasdiff` (breaking-change) | Medio (TD-04) |
 | **Duplicate-doc detection** | Hash/diff de documentos canónicos vs duplicados (detecta TD-07/08) | Bajo |
+
+> **Entregado en E3-A:** Experimental isolation, Repository hygiene, Mandatory governance docs y ADR integrity pasaron de "Can Be Automated" a "Already Automated" (como reglas WARNING-only de AEK v1.1).
 
 ### 2.3 Manual Review Required 🔵
 | Regla | Razón |
@@ -63,17 +70,22 @@
 | Contract-drift detection | Comparar handlers Express vs OpenAPI automáticamente |
 | Coverage gate | Umbral mínimo cuando la suite sea estable en CI (post TD-02) |
 
-## 3. AEK Evolution Roadmap (diseño — NO implementado en E2)
+## 3. AEK Evolution Roadmap
 
-> Principio: **aditivo y no invasivo**. Las nuevas capacidades serían *governance analyzers* separados del `dependency-graph` de producción; las reglas DI-001/002/003 permanecen intactas.
+> Principio: **aditivo y no invasivo**. Las capacidades de gobernanza son *governance analyzers* separados del `dependency-graph` de producción; las reglas DI-001/002/003 permanecen intactas.
 
-| Fase | Capacidad | Tipo | ADR/Deuda |
+| Fase | Capacidad | Tipo | Estado |
 |---|---|---|---|
-| **AEK v1.1 (E3)** | Experimental isolation rule (RULE-ISO-00x): prohíbe import de `vertical2`/`legacy` desde producción | Extensión del graph existente | TD-01 / ADR-007 |
-| **AEK v1.2 (E3)** | Repository hygiene analyzer (archivos sueltos en raíz) | Analyzer nuevo (no toca producción) | TD-05 |
-| **AEK v1.3 (E4)** | ADR integrity + documentation link checker | Analyzer de gobernanza | TD-09 / TD-07 |
-| **AEK v1.4 (E4)** | Baseline/topology validator | Analyzer de gobernanza | E2 outputs |
-| **AEK v2.0 (RC1)** | OpenAPI contract-drift + append-only static checks | Analyzers avanzados | ADR-001/005/006 |
+| **AEK v1.1 (E3-A)** | RULE-ISO-001 — experimental isolation (`vertical2`/`legacy`) | Regla de gobernanza (usa dependency graph) | ✅ **ENTREGADO** |
+| **AEK v1.1 (E3-A)** | RULE-HYG-001 — repository hygiene (archivos sueltos en raíz) | Analyzer filesystem | ✅ **ENTREGADO** |
+| **AEK v1.1 (E3-A)** | RULE-DOC-001 — mandatory governance docs | Analyzer filesystem | ✅ **ENTREGADO** |
+| **AEK v1.1 (E3-A)** | RULE-ADR-001 — ADR integrity + drift nombre/título | Analyzer filesystem | ✅ **ENTREGADO** |
+| **AEK v1.1 (E3-A)** | Health report (6 dimensiones + overall) | Reporter enriquecido | ✅ **ENTREGADO** |
+| **AEK v1.2 (E4)** | Documentation link-checker + duplicate-doc detection | Analyzer de gobernanza | Pendiente (TD-07) |
+| **AEK v1.3 (E4)** | Baseline/topology validator | Analyzer de gobernanza | Pendiente (E2 outputs) |
+| **AEK v2.0 (RC1)** | OpenAPI contract-drift + append-only static checks | Analyzers avanzados | Pendiente (ADR-001/005/006) |
+
+> Promoción de severidad: las reglas v1.1 nacen `warning`. Su promoción a `error` (bloqueante) se evalúa en E4/RC1 **una vez resuelta la deuda subyacente** (p. ej. RULE-ISO-001 → `error` tras decidir el destino de `vertical2` en TD-01). Promover ahora rompería CI sobre deuda fuera de alcance.
 
 ## 4. Modelo de severidad propuesto (diseño)
 
@@ -85,11 +97,11 @@
 
 > Las reglas nuevas se introducirían como `warning` y se promoverían a `error` tras un periodo de estabilización, evitando regresiones de CI (consistente con la estrategia advisory de E1).
 
-## 5. Resumen ejecutivo del assessment
+## 5. Resumen ejecutivo del assessment (post E3-A)
 
-- **6 políticas ya automatizadas** (núcleo de arquitectura, el más crítico).
-- **8 políticas automatizables** de forma no invasiva (topología, higiene, aislamiento experimental, integridad ADR, consistencia docs, baseline, OpenAPI, duplicados).
+- **10 políticas ya automatizadas** — 6 de arquitectura (bloqueantes) + **4 de gobernanza nuevas** (WARNING-only, AEK v1.1).
+- **5 políticas automatizables** restantes de forma no invasiva (topología, consistencia docs, baseline, OpenAPI, duplicados).
 - **5 requieren revisión manual** por naturaleza semántica/comercial.
 - **4 mejoras futuras** de mayor esfuerzo.
 
-> Recomendación: priorizar **Experimental isolation** (AEK v1.1) en E3 — convierte una convención frágil (TD-01) en invariante ejecutable, reforzando la condición de certificación de BC-1.
+> E3-A entregó la capa de gobernanza ejecutable de AEK v1.1: convirtió 4 convenciones frágiles en señales ejecutables (WARNING-only), enriqueció el reporte con 6 dimensiones de salud, y dejó el baseline certificado BC-1 y el exit code completamente intactos. Próximo paso (E4): link-checker/duplicados y, condicionado a TD-01, promover RULE-ISO-001 a bloqueante.

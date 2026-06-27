@@ -105,9 +105,18 @@ jobs:
         continue-on-error: true
         run: npx --yes @redocly/cli@1 lint "openapi/*.yaml"
 
-      # ── 8. AEK Architecture Gate (BLOCKING) ──────────────────────
+      # ── 8. AEK Architecture Gate (BLOCKING — ADR-002 RULE-DI-001/002/003) ──
       - name: AEK Architecture Gate
         run: pnpm aek:check
+
+      # ── 8b. AEK Governance Health (ADVISORY — v1.1, WARNING-only) ──
+      #     Surfaces RULE-ISO-001/HYG-001/DOC-001/ADR-001 from the enriched
+      #     report. Never blocks: these rules cannot change the AEK exit code.
+      - name: AEK Governance Health (advisory)
+        if: always()
+        continue-on-error: true
+        run: |
+          node -e "const r=require('./.aek/report.json'); if(!r.health){console.log('no governance health section');process.exit(0)} const d=r.health.dimensions; console.log('AEK Governance Health (advisory) — overall '+r.health.overall.score+'/100 '+r.health.overall.status); for(const k of Object.keys(d)){console.log('  '+k.padEnd(22)+' '+d[k].score+'/100 '+d[k].status+' ('+d[k].findings+' warning(s))')} console.log('Total governance warnings: '+((r.governance&&r.governance.findings.length)||0)+' (WARNING-only; non-blocking)')"
 
       # ── 9. ESLint (ADVISORY — no ESLint config committed) ─────────
       - name: ESLint

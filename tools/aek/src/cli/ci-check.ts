@@ -22,9 +22,18 @@ async function main(): Promise<void> {
 
   // Same flow as index.ts; the report object is computed but intentionally
   // NOT written — this gate is read-only.
-  const { policy } = await runAek({ root: options.root, baseline: options.baseline });
+  const { policy, report } = await runAek({ root: options.root, baseline: options.baseline });
 
   process.stdout.write(`${policy.reason}\n`);
+
+  // Advisory governance health summary (AEK v1.1). Never affects exit code.
+  if (report.health) {
+    const warnings = report.governance?.findings.length ?? 0;
+    process.stdout.write(
+      `AEK Governance Health (advisory) — overall ${report.health.overall.score}/100 (${report.health.overall.status}); ${warnings} warning(s)\n`,
+    );
+  }
+
   process.exitCode = policy.exitCode;
 }
 
