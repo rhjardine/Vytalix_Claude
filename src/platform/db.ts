@@ -16,8 +16,8 @@ export interface TenantClient {
 }
 
 interface RawDb {
-  rawQuery(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]>
-  rawQueryOne(sql: string, params?: unknown[]): Promise<Record<string, unknown> | null>
+  rawQuery<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
+  rawQueryOne<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | null>
   pool: Pool
 }
 
@@ -39,18 +39,20 @@ export function getDb(): RawDb {
   return {
     pool: _pool,
 
-    async rawQuery(sql: string, params: unknown[] = []): Promise<Record<string, unknown>[]> {
+    async rawQuery<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
       const client = await _pool!.connect()
       try {
         const res = await client.query(sql, params)
-        return res.rows
+        return res.rows as T[]
       } finally {
         client.release()
       }
     },
 
-    async rawQueryOne(sql: string, params: unknown[] = []): Promise<Record<string, unknown> | null> {
-      const rows = await this.rawQuery(sql, params)
+    async rawQueryOne<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T | null> {
+      // `this` is untyped here (strict:false → implicit any), so the type
+      // argument is applied via cast rather than `this.rawQuery<T>` (TS2347).
+      const rows = (await this.rawQuery(sql, params)) as T[]
       return rows[0] ?? null
     },
   }
