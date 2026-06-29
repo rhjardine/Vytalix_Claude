@@ -185,7 +185,7 @@ export interface ConsentGrantParams {
 
 export async function grantConsent(params: ConsentGrantParams): Promise<string> {
   const id = await withTenant(params.tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ id: string }>(
       `INSERT INTO consent_records (
          id, "tenantId", "patientId",
          "consentType", "legalBasis",

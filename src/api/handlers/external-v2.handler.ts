@@ -252,17 +252,17 @@ export function createExternalV2Router(): Router {
 
         // Load context for referral evaluation
         const [bioAge, riskScore, engagement] = await Promise.all([
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ differentialAge: number }>(
             `SELECT "differentialAge"::float FROM biological_age_assessments
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid AND "assessmentType"='BIOPHYSICS'
              ORDER BY "assessedAt" DESC LIMIT 1`, [tenantId, patientId]
           )),
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ riskCategory: string }>(
             `SELECT "riskCategory" FROM risk_scores
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
              ORDER BY "computedAt" DESC LIMIT 1`, [tenantId, patientId]
           )),
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ tier: string }>(
             `SELECT tier FROM engagement_scores WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid`,
             [tenantId, patientId]
           )),
@@ -332,7 +332,7 @@ export function createExternalV2Router(): Router {
 async function resolveSubjectRef(tenantId: string, subjectRef: string): Promise<string> {
   // subjectRef maps to patient's external ID (stored in externalIds JSONB or as mrn)
   const patient = await withTenant(tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ id: string }>(
       `SELECT id FROM patients
        WHERE "tenantId"=$1::uuid AND (mrn=$2 OR "externalIds"->>'disglobal_ref'=$2)
        LIMIT 1`,
@@ -356,7 +356,7 @@ async function computePreventiveAndReferralAsync(
   ])
 
   const cvRiskCategory = await withTenant(tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ riskCategory: string }>(
       `SELECT "riskCategory" FROM risk_scores WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
        ORDER BY "computedAt" DESC LIMIT 1`, [tenantId, patientId]
     )

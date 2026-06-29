@@ -141,7 +141,7 @@ async function resolveKey(keyHash: string): Promise<ApiKeyContext | null> {
   // DB lookup
   try {
     const db  = getDb()
-    const row = await db.rawQueryOne(
+    const row = await db.rawQueryOne<{ id: string; tenantId: string; name: string; permissions: Record<string, string[]>; rateLimitTier: 'STANDARD' | 'PROFESSIONAL' | 'ENTERPRISE' }>(
       `SELECT id, "tenantId", name, permissions, "rateLimitTier"
        FROM api_keys
        WHERE "keyHash" = $1
