@@ -31,21 +31,10 @@ import { requireApiKey } from '../middlewares/api-key.middleware'
 // Auth middleware — API Key resolution
 // ─────────────────────────────────────────────────────────────────
 
-interface ApiKeyContext {
-  tenantId: string
-  keyId: string
-  permissions: Record<string, string[]>
-  rateLimitTier: string
-}
-
-declare global {
-  namespace Express {
-    interface Request {
-      apiKeyCtx?: ApiKeyContext
-      correlationId: string
-    }
-  }
-}
+// The Express Request augmentation (apiKeyCtx, correlationId) is provided
+// canonically by api-key.middleware.ts (imported above via requireApiKey).
+// A local duplicate declaration here caused conflicting `apiKeyCtx` types
+// (TS2717); removed to use the single canonical ApiKeyContext.
 
 // NOTE: apiKeyAuth is now the canonical requireApiKey from api-key.middleware
 // It provides: brute-force protection, Redis cache, full audit trail, scope enforcement
