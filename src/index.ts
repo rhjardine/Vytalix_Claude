@@ -17,20 +17,18 @@ import crypto from 'node:crypto'
 // ── Re-export all public types ────────────────────────────────────
 
 export type {
-  AssessBioAgeResponse,
-  ComputePreventiveScoreResponse,
-  EvaluateReferralResponse,
-  RecordEngagementResponse,
-  CohortInsightsResponse,
-  BiophysicsMeasurements,
-  DimensionalMeasurement,
   AgeStatus,
   ScoreTier,
   EngagementTier,
-  ReferralType,
   Urgency,
-  ProblemDetail,
 } from './shared/contracts-v1'
+
+// BiophysicsMeasurements and DimensionalMeasurement are defined in the
+// biophysics engine (their canonical source) — corrected re-export path.
+export type {
+  BiophysicsMeasurements,
+  DimensionalMeasurement,
+} from './longevity/biophysics-engine'
 
 // ── SDK-specific Spanish-first types (consumer-facing) ───────────
 
