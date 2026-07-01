@@ -7,6 +7,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "api:dev": "ts-node-dev --respawn --transpile-only --project tsconfig.server.json src/server.ts",
     "api:build": "tsc --project tsconfig.server.json",
     "api:start": "node dist/server.js",
@@ -27,7 +28,10 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
-    "typecheck": "tsc --noEmit --project tsconfig.server.json"
+    "typecheck": "tsc --noEmit --project tsconfig.server.json",
+    "aek:check": "pnpm --dir tools/aek aek:analyze",
+    "sandbox:test": "vitest run sandbox/tests",
+    "ci": "pnpm sandbox:test && DATABASE_URL=${DATABASE_URL:-postgresql://localhost:5432/ci} pnpm exec prisma validate && pnpm aek:check"
   },
   "dependencies": {
     "@prisma/client": "^5.7.0",
@@ -40,6 +44,7 @@
     "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.2",
     "next": "14.0.4",
+    "node-fetch": "^2.7.0",
     "pg": "^8.21.0",
     "pino": "^8.17.2",
     "pino-pretty": "^10.3.1",
@@ -55,6 +60,7 @@
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.10.0",
+    "@types/node-fetch": "^2.6.13",
     "@types/pg": "^8.20.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",

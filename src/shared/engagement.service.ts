@@ -108,7 +108,7 @@ export class EngagementService {
 
     // DB fallback
     const row = await withTenant(tenantId, tc =>
-      tc.queryOne(
+      tc.queryOne<EngagementScoreSnapshot>(
         `SELECT score, tier, streak, "lastEventAt", "totalEvents",
                 "testCompletionRate"::float, "updatedAt"
          FROM engagement_scores
@@ -143,7 +143,7 @@ export class EngagementService {
   private async recomputeScore(tenantId: string, patientId: string): Promise<void> {
     // Load events from the rolling window
     const events = await withTenant(tenantId, tc =>
-      tc.queryMany(
+      tc.queryMany<{ eventType: string; eventDate: string }>(
         `SELECT "eventType", "occurredAt"::date AS "eventDate"
          FROM engagement_events
          WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
@@ -176,7 +176,7 @@ export class EngagementService {
 
     // Total events count
     const totalEvents = await withTenant(tenantId, tc =>
-      tc.queryOne(
+      tc.queryOne<{ total: number }>(
         `SELECT COUNT(*)::int AS total FROM engagement_events
          WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid`,
         [tenantId, patientId]
@@ -185,7 +185,7 @@ export class EngagementService {
 
     // Test completion rate
     const testStats = await withTenant(tenantId, tc =>
-      tc.queryOne(
+      tc.queryOne<{ completed: number; started: number }>(
         `SELECT
            SUM(CASE WHEN "eventType"='TEST_COMPLETED' THEN 1 ELSE 0 END)::int AS completed,
            SUM(CASE WHEN "eventType" IN ('TEST_COMPLETED','TEST_STARTED') THEN 1 ELSE 0 END)::int AS started

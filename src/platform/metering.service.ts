@@ -163,7 +163,7 @@ export async function checkQuota(
 async function getTenantQuotaConfig(tenantId: string): Promise<QuotaConfig> {
   try {
     const db  = getDb()
-    const row = await db.rawQueryOne(
+    const row = await db.rawQueryOne<{ monthlyApiLimit: number }>(
       `SELECT "monthlyApiLimit" FROM tenants WHERE id = $1::uuid`,
       [tenantId]
     )
@@ -208,7 +208,7 @@ export async function computeRevenueShare(
          AND TO_CHAR("convertedAt", 'YYYY-MM') = $2`,
       [tenantId, yearMonth]
     ),
-    db.rawQueryOne(
+    db.rawQueryOne<{ revenueShareRatio: number }>(
       `SELECT "revenueShareRatio" FROM tenants WHERE id = $1::uuid`,
       [tenantId]
     ),

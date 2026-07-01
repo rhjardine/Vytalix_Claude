@@ -1,0 +1,143 @@
+name: CI Pipeline
+
+# =============================================================================
+# Vytalix Platform — Unified CI Quality Gates (Sprint E1)
+#
+# Single production-ready pipeline. Stages run in order; report upload is
+# always executed. Stage classification (blocking vs advisory) and the
+# rationale for each advisory stage are documented in:
+#   docs/governance/QUALITY_GATES.md
+#   docs/SPRINT_E1_REPORT.md  (§Deferred Architectural Decisions / Technical Debt)
+#
+# BLOCKING  (fail the pipeline): Sandbox tests · Prisma Validate · AEK
+# ADVISORY  (run + report, non-blocking, pre-existing/out-of-scope):
+#   Type Check, Build  → pre-existing type errors in production code (TD-14);
+#                         src/vertical2 removed in E3-B (TD-01 resolved)
+#   Full Vitest, Coverage → require Postgres + Redis services + seed (E2)
+#   ESLint             → no ESLint config committed (E2)
+#   OpenAPI            → no validation tooling committed (Task 5 → recommend E2)
+# =============================================================================
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'adr/**'
+  push:
+    branches:
+      - main
+      - 'adr/**'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+
+    env:
+      # Dummy values so tooling that interpolates env (e.g. Prisma datasource)
+      # resolves during validation. No live services are contacted by the
+      # blocking stages.
+      DATABASE_URL: postgresql://vytalix:vytalix@localhost:5432/vytalix_ci
+      REDIS_URL: redis://localhost:6379
+      CI: 'true'
+
+    steps:
+      # ── 1. Install ────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install AEK dependencies
+        run: pnpm install --no-frozen-lockfile
+        working-directory: tools/aek
+
+      # ── 2. Type Check (ADVISORY — pre-existing production type errors, TD-14) ──
+      - name: Type Check
+        id: typecheck
+        continue-on-error: true
+        run: pnpm typecheck
+
+      # ── 3. Build (ADVISORY — same pre-existing breakage) ──────────
+      - name: Build (server)
+        id: build
+        continue-on-error: true
+        run: pnpm api:build
+
+      # ── 4. Vitest — deterministic sandbox suite (BLOCKING) ────────
+      - name: Vitest (deterministic — sandbox)
+        run: pnpm sandbox:test
+
+      #    Full suite (ADVISORY — requires Postgres/Redis services + seed)
+      - name: Vitest (full suite)
+        id: vitest_full
+        continue-on-error: true
+        run: pnpm test
+
+      # ── 5. Coverage (ADVISORY — depends on full-suite infra) ──────
+      - name: Coverage
+        id: coverage
+        continue-on-error: true
+        run: pnpm test:coverage
+
+      # ── 6. Prisma Validate (BLOCKING) ────────────────────────────
+      - name: Prisma Validate
+        run: pnpm exec prisma validate
+
+      # ── 7. OpenAPI Validation (ADVISORY — tooling not yet committed) ──
+      #     Per Sprint E1 Task 5: no validation tooling exists in the repo.
+      #     This runs Redocly ephemerally via npx as a convenience signal.
+      #     Formal adoption (committed dev dependency + ruleset) → E2.
+      - name: OpenAPI Validation
+        id: openapi
+        continue-on-error: true
+        run: npx --yes @redocly/cli@1 lint "openapi/*.yaml"
+
+      # ── 8. AEK Architecture Gate (BLOCKING — ADR-002 RULE-DI-001/002/003) ──
+      - name: AEK Architecture Gate
+        run: pnpm aek:check
+
+      # ── 8b. AEK Governance Health (ADVISORY — v1.1, WARNING-only) ──
+      #     Surfaces RULE-ISO-001/HYG-001/DOC-001/ADR-001 from the enriched
+      #     report. Never blocks: these rules cannot change the AEK exit code.
+      - name: AEK Governance Health (advisory)
+        if: always()
+        continue-on-error: true
+        run: |
+          node -e "const r=require('./.aek/report.json'); if(!r.health){console.log('no governance health section');process.exit(0)} const d=r.health.dimensions; console.log('AEK Governance Health (advisory) — overall '+r.health.overall.score+'/100 '+r.health.overall.status); for(const k of Object.keys(d)){console.log('  '+k.padEnd(22)+' '+d[k].score+'/100 '+d[k].status+' ('+d[k].findings+' warning(s))')} console.log('Total governance warnings: '+((r.governance&&r.governance.findings.length)||0)+' (WARNING-only; non-blocking)')"
+
+      # ── 9. ESLint (ADVISORY — no ESLint config committed) ─────────
+      - name: ESLint
+        id: eslint
+        continue-on-error: true
+        run: pnpm lint
+
+      # ── 10. Upload Reports (ALWAYS) ──────────────────────────────
+      - name: Upload AEK report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aek-report
+          path: .aek/report.json
+          if-no-files-found: ignore
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: ignore

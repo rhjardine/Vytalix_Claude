@@ -89,7 +89,7 @@ function createTenantModelProxy<M extends keyof PrismaClient>(
   tenantId: string,
   model: M
 ) {
-  const delegate = prisma[model] as Record<string, (...args: unknown[]) => Promise<unknown>>
+  const delegate = prisma[model] as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
 
   return new Proxy(delegate, {
     get(target, prop: string) {
@@ -98,7 +98,7 @@ function createTenantModelProxy<M extends keyof PrismaClient>(
       return async (...args: unknown[]) => {
         return prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`
-          const txDelegate = tx[model as keyof typeof tx] as Record<string, (...a: unknown[]) => Promise<unknown>>
+          const txDelegate = tx[model as keyof typeof tx] as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
           return txDelegate[prop](...args)
         })
       }

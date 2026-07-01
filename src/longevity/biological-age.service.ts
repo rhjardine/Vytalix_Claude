@@ -155,7 +155,7 @@ export class BiologicalAgeService {
 
     // DB fallback
     return withTenant(tenantId, async (tc) => {
-      const row = await tc.queryOne(
+      const row = await tc.queryOne<{ id: string; biologicalAge: number; differentialAge: number; ageStatus: string; partialAgesSnapshot: Record<string, number>; algorithmVersion: string; assessedAt: Date }>(
         `SELECT id, "biologicalAge"::float, "differentialAge"::float,
                 "ageStatus", "partialAgesSnapshot", "algorithmVersion", "assessedAt"
          FROM biological_age_assessments
@@ -213,7 +213,7 @@ export class BiologicalAgeService {
     correlationId: string
   ): Promise<string> {
     const row = await withTenant(tenantId, (tc) =>
-      tc.queryOne(
+      tc.queryOne<{ id: string }>(
         `INSERT INTO biological_age_assessments (
            id, "tenantId", "patientId",
            "assessmentType", "chronologicalAge",
@@ -247,7 +247,7 @@ export class BiologicalAgeService {
     tenantId: string,
     sex: string,
     isAthlete: boolean,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<BoardData[]> {
     const cacheKey = boardsCacheKey(tenantId, sex, isAthlete)
 

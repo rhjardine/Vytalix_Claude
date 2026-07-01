@@ -98,7 +98,7 @@ export class InsightsService {
 
     // Core aggregate query
     const stats = await withTenant(tenantId, tc =>
-      tc.queryOne(
+      tc.queryOne<{ cohortSize: number; avgBiologicalAge: number; avgChronologicalAge: number; avgDifferential: number; medianBiologicalAge: number; pctRejuvenecido: number; pctNormal: number; pctEnvejecido: number }>(
         `SELECT
            COUNT(DISTINCT baa."patientId") AS "cohortSize",
            ROUND(AVG(baa."biologicalAge")::numeric, 1)::float    AS "avgBiologicalAge",
@@ -177,13 +177,13 @@ export class InsightsService {
 
     const [patientStats, assessStats, referralStats] = await Promise.all([
       withTenant(tenantId, tc =>
-        tc.queryOne(
+        tc.queryOne<{ total: number }>(
           `SELECT COUNT(*)::int AS total FROM patients WHERE "tenantId"=$1::uuid AND status='ACTIVE'`,
           [tenantId]
         )
       ),
       withTenant(tenantId, tc =>
-        tc.queryOne(
+        tc.queryOne<{ total: number; avgDelta: number; last30d: number }>(
           `SELECT
              COUNT(*)::int                        AS total,
              ROUND(AVG("differentialAge")::numeric, 2)::float AS "avgDelta",
@@ -194,7 +194,7 @@ export class InsightsService {
         )
       ),
       withTenant(tenantId, tc =>
-        tc.queryOne(
+        tc.queryOne<{ generated: number; converted: number; topType: string | null }>(
           `SELECT
              COUNT(*)::int AS generated,
              SUM(CASE WHEN status='CONVERTED' THEN 1 ELSE 0 END)::int AS converted,
@@ -322,7 +322,7 @@ export class InsightsService {
     )
 
     const total = await withTenant(tenantId, tc =>
-      tc.queryOne(
+      tc.queryOne<{ n: number }>(
         `SELECT COUNT(DISTINCT "patientId")::int AS n
          FROM biological_age_assessments
          WHERE "tenantId"=$1::uuid AND "assessmentType"=$2

@@ -27,6 +27,8 @@ import { createExternalV2Router } from './api/handlers/external-v2.handler'
 // import { createFunnelRouter, createExchangeRateHandler } from './api/handlers/funnel.handler'
 import { createBillingAdminRouter } from './api/handlers/billing-admin.handler'
 import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './api/pipelines/pipeline-v2.orchestrator'
+import { createPaymentWebhookRouter } from './api/handlers/payment-webhook.handler'
+import { registerPaymentPipeline } from './api/pipelines/payment-pipeline'
 
 // ── CFE Dental Routers (Sprint 2A — mounting previously orphaned routers) ──
 import { dentalAdminRouter }    from './dental/routers/dental-admin.router'
@@ -135,6 +137,9 @@ app.get('/metrics/prometheus', prometheusHandler)
 // ── External API v2 (API Key auth — Disglobal + partners) ────────
 app.use('/api/v2', createExternalV2Router())
 
+// ── Payment webhook (HMAC-signed — Disglobal → Vytalix) ──────────
+app.use('/api/v2', createPaymentWebhookRouter())
+
 // ── CFE Dental API — Admin (tenant settings, catalog, analytics) ─
 // Injects dental tenant context from X-Tenant-ID + X-User-ID headers.
 // In production these values come from the JWT validated upstream.
@@ -166,6 +171,9 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // const platformOrchestrator = new PlatformPipelineOrchestrator()
 // registerPlatformEventListeners(platformOrchestrator)
 
+// ── Payment pipeline (PaymentConfirmed → activation + notification) ──
+registerPaymentPipeline()
+
 // ── Metering flush (every 60s) ────────────────────────────────────
 setInterval(async () => {
   const flushed = await flushMeterStream()
@@ -186,7 +194,7 @@ app.listen(PORT, () => {
       // Funnel API (public)
       'POST /api/funnel/leads',
       'POST /api/funnel/vitality-assessment',
-      'POST /api/funnel/facial-analysis (stub)',
+      'POST /api/funnel/facial-analysis',
       'POST /api/funnel/booking',
       'GET  /api/exchange-rate',
       // External API v2 (API Key — Disglobal + partners)
@@ -196,6 +204,8 @@ app.listen(PORT, () => {
       'GET  /api/v2/referral/:subjectRef',
       'POST /api/v2/engagement/events',
       'GET  /api/v2/insights/cohort',
+      // Payment webhook (HMAC-signed — Disglobal)
+      'POST /api/v2/webhooks/payment',
       // CFE Dental — Admin
       'POST /api/v2/dental/admin/catalog',
       'GET  /api/v2/dental/admin/catalog',
