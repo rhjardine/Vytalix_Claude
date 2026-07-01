@@ -247,7 +247,7 @@ export class BiologicalAgeService {
     tenantId: string,
     sex: string,
     isAthlete: boolean,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<BoardData[]> {
     const cacheKey = boardsCacheKey(tenantId, sex, isAthlete)
 

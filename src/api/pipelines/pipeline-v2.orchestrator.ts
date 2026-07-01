@@ -114,7 +114,7 @@ export class PlatformPipelineOrchestrator {
     tenantId: string,
     patientId: string,
     correlationId: string,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<void> {
     const start = Date.now()
     try {
@@ -163,7 +163,7 @@ export class PlatformPipelineOrchestrator {
     tenantId: string,
     patientId: string,
     correlationId: string,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<void> {
     const start = Date.now()
     try {
