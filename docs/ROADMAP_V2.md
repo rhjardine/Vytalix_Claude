@@ -12,6 +12,24 @@
 
 ---
 
+## ▶ A1 UPDATE (Fase 7) — Post decisión ADR-EventBus
+
+Tras Sprint A1, la decisión de arquitectura de eventos está tomada (PROPOSED): **[ADR_EVENTBUS.md](./ADR_EVENTBUS.md) — Opción A: el bus tipado `publish/subscribe` es el ÚNICO modelo de eventos.** Esto reordena el roadmap:
+
+- **Prerequisito inmediato NUEVO (bloqueante de todo lo demás en eventos):** *Confirmación de negocio del alcance por-cadena del piloto Disglobal* (¿migrar o eliminar `referral.triggered`/`vitality.assessed`/`referral.converted`/`funnel.*`/core subscriptions?). Sin esto, **B1 no puede planificarse por-cadena**. Ver ADR §Alcance por-cadena (INSUFFICIENT REPOSITORY EVIDENCE → input de negocio).
+- **B1 (EventBus impl)** se refina: ejecuta [EVENTBUS_MIGRATION_PLAN.md](./EVENTBUS_MIGRATION_PLAN.md) M0–M4, por-cadena, con autorización de runtime.
+- **Opción B (restaurar emit/on) queda DESCARTADA** por ADR → ninguna implementación futura debe exponer `emit/on` crudo (rompe la invariante transport-agnostic/EventBridge).
+- **B2 health(71)** permanece bloqueado hasta que M1–M3 fijen el modelo (el import `event-bus` de health depende del bus).
+
+**Ruta crítica actualizada:**
+```
+[Business input: alcance de cadenas]  ← NUEVO prerequisito bloqueante
+        └─► A1 ADR-EventBus (ACCEPTED) ─► B1 (migración por-cadena, M0–M4) ─► B2(health 71) ─► typecheck→0 ─► D1 gate
+```
+El cuello de botella sigue siendo B1, ahora precedido por una **decisión de negocio** (no técnica).
+
+---
+
 ## Phase A — Architecture Decisions (sin cambios de runtime)
 
 Emisión formal de ADRs a partir de [ARCHITECTURE_DECISION_CANDIDATES.md](./ARCHITECTURE_DECISION_CANDIDATES.md). **Documentación/gobernanza únicamente.**
