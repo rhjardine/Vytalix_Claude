@@ -3,10 +3,10 @@
 
 | Campo | Valor |
 |---|---|
-| Rol | **Referencia arquitectónica única** del modelo de eventos de Vytalix: catálogo semántico (descriptivo, §1–§7) **+ contrato canónico** (constitución prescriptiva, §8) |
-| Estado | ACTIVO — catálogo + contrato canónico |
-| Sprint | A2 (descubrimiento/consolidación del modelo) · **A3 (contrato semántico, §8)** |
-| Modo | **Análisis únicamente** — sin cambios de código/runtime/EventBus |
+| Rol | **Referencia arquitectónica única** del modelo de eventos de Vytalix: catálogo semántico (§1–§7) **+ contrato canónico** (§8) **+ arquitectura de dominio semántico** (§10) |
+| Estado | ACTIVO — catálogo + contrato + arquitectura de dominio |
+| Sprint | A2 (modelo) · **A3 (contrato, §8)** · **B1.5 (arquitectura de dominio semántico, §10)** |
+| Modo | **Análisis/arquitectura únicamente** — sin cambios de código/runtime/EventBus/tipos |
 | Fecha | 2026-06/07 |
 
 > **Fuente de verdad canónica: el código fuente `src/platform/event-bus.ts`** (la unión `VytalixEvent`). Toda afirmación cita `archivo:línea`. Documentos de soporte (no se recrean aquí): arquitectura actual → [EVENTBUS_CURRENT_ARCHITECTURE.md](./EVENTBUS_CURRENT_ARCHITECTURE.md); decisión → [ADR_EVENTBUS.md](./ADR_EVENTBUS.md); flujo de eventos → [ARCHITECTURE_DEPENDENCY_GRAPH.md](./ARCHITECTURE_DEPENDENCY_GRAPH.md) §Event Flow Map.
@@ -275,4 +275,172 @@ Cada cláusula [R] cita `event-bus.ts:línea` (o el archivo del call-site) en §
 
 ---
 
-> **STOP.** Modelo **y contrato** canónicos consolidados desde el código fuente en un único artefacto. Sin cambios de runtime/EventBus/código (typecheck 36 sin cambio). Un solo documento canónico (§1–§9) + un executive summary ([EVENT_MODEL_EXECUTIVE_SUMMARY.md](./EVENT_MODEL_EXECUTIVE_SUMMARY.md)). Cero documentos nuevos; entropía documental reducida.
+# 10. Event Domain Architecture — La arquitectura de dominio semántico (Sprint B1.5)
+
+> **Qué es esto.** La arquitectura semántica **permanente** que todo evento futuro debe seguir — el contrato de dominio para cada bounded context, integración, microservicio, componente de IA, partner externo y transporte EventBridge. Extiende (no duplica) el contrato §8: §8 fija las *reglas* (naming, envelope, privacidad); §10 fija la *estructura de dominio* (taxonomía, matriz de campos, matriz de privacidad, escalabilidad, evolución).
+>
+> **Principio rector:** el código fuente prevalece. Los `eventType` canónicos son PascalCase past-tense **en el código** (`event-bus.ts:34-110`); esta sección **no los renombra**. Introduce una capa **ortogonal** de *namespace de dominio* (dot.lowercase) para clasificación/routing/EventBridge, que convive con el `eventType` sin cambiarlo.
+
+## 10.1 Reconciliación de naming (resolución de conflicto)
+
+Existen **dos ejes de nombre ortogonales**, no uno:
+
+| Eje | Formato | Ejemplo | Autoridad | Uso |
+|---|---|---|---|---|
+| **`eventType`** (discriminador wire) | **PascalCase past-tense** | `ObservationAdded` | **Código** (`event-bus.ts`) — inmutable | tipo TS, discriminador, clave `emitter.emit` (§8.3) |
+| **Domain namespace** (clasificación) | **`vytalix.<dominio>.<subdominio>`** lowercase-dotted | `vytalix.clinical.observation` | Esta arquitectura | EventBridge `source`, routing, ownership, privacidad |
+
+> **Decisión (B1.5):** las convenciones `dot.lowercase` del enunciado (`observation.ingested`, `risk.score.computed`) se adoptan como **namespace de dominio**, NO como `eventType`. El `eventType` permanece PascalCase porque el código manda. Ningún evento se renombra. Esto **no regresa** la regla A3 §8.3 (que prohíbe `dot.lowercase` *como eventType*): sigue prohibido como eventType; se usa solo como namespace de clasificación.
+
+## 10.2 Event Domain Taxonomy (Phase 2) — 6 dominios raíz canónicos
+
+**Método:** un *dominio* es un contexto de **significado** (no de código), con un dueño único, una clase de privacidad dominante y un agregado natural. Se evaluaron los ~23 candidatos del enunciado; se consolidan en **6 raíces** con subdominios. Fragmentar en 23 raíces destruiría la cohesión (Patient/Observation/Decision comparten `patientId` y PHI → mismo dominio).
+
+**Raíces canónicas:** `clinical` · `commerce` · `identity` · `platform` · `intelligence` · `analytics`.
+
+| Candidato (enunciado) | Decisión | Destino canónico | Justificación (evidencia) |
+|---|---|---|---|
+| Clinical | **KEEP raíz** | `clinical` | Dominio núcleo; 6 de 7 eventos actuales. |
+| Patient | **MERGE** | `clinical.patient` | Agregado `patientId` (`handlers.ts:74`); facet del registro clínico. |
+| Observation | **MERGE** | `clinical.observation` | LOINC-coded (`event-bus.ts:47`, `handlers.ts:131`); facet clínico. |
+| Decision Support | **MERGE** | `clinical.decision` | `DecisionGenerated`/`RecommendationReviewed` (`handlers.ts:203,259`). |
+| Risk | **MERGE** | `clinical.risk` | `RiskScoreComputed` derivado clínico (`handlers.ts:179`). |
+| Longevity | **MERGE** | `clinical.longevity` | Bio-age derivado clínico (`biological-age.service.ts`); comparte `patientId`+PHI. |
+| Payment | **KEEP** | `commerce.payment` | Único chain activo (`payment-webhook.handler.ts:138`); frontera partner. |
+| Billing | **MERGE** | `commerce.billing` | Metering/revenue-share (`metering.service.ts`); mismo boundary comercial. |
+| Referral | **MERGE** | `commerce.referral` | Handoff partner-facing (webhook a Disglobal, `orchestrator.ts:242`). |
+| Partner Integration | **DISAPPEAR (absorbe)** | raíz `commerce` | La raíz `commerce` **es** la frontera de partner; no es un dominio aparte. |
+| AI | **MERGE** | `intelligence` (reservado) | Sin eventos hoy; ciclo de modelo/inferencia. |
+| ML | **MERGE** | `intelligence` (reservado) | Mismo dominio que AI; no se separan. |
+| Workflow | **MERGE** | `platform.workflow` | Orquestación = concern de plataforma (`pipeline-v2.orchestrator.ts`). |
+| Notification | **MERGE** | `platform.notification` | Mecanismo de entrega, no dominio de significado. |
+| Identity | **KEEP raíz** | `identity` (reservado) | Frontera de confianza (tenant/user). |
+| Consent | **MERGE** | `identity.consent` | Mismo dominio de confianza. |
+| Security | **SPLIT** | authz→`identity`; audit→`platform.audit` | Dos significados distintos. |
+| Audit | **MERGE** | `platform.audit` | Cross-domain; referencia eventos de otros dominios. |
+| Analytics | **KEEP raíz** | `analytics` (reservado) | Eventos derivados/agregados (cohortes, `orchestrator.ts:256`). |
+| Infrastructure | **DISAPPEAR (absorbe)** | raíz `platform` | Concern técnico transversal. |
+| Operational | **DISAPPEAR (absorbe)** | raíz `platform` | Igual que Infrastructure. |
+| Telemetry | **MERGE** | `platform.telemetry` | Observabilidad. |
+| Platform | **KEEP raíz** | `platform` | Raíz transversal técnica. |
+
+**Mapeo de los 7 eventos canónicos actuales → dominio:**
+
+| eventType | Domain namespace | Dominio raíz |
+|---|---|---|
+| `PatientCreated` | `vytalix.clinical.patient` | clinical |
+| `ObservationAdded` | `vytalix.clinical.observation` | clinical |
+| `PatientModelUpdated` | `vytalix.clinical.patient` | clinical |
+| `DecisionGenerated` | `vytalix.clinical.decision` | clinical |
+| `RiskScoreComputed` | `vytalix.clinical.risk` | clinical |
+| `RecommendationReviewed` | `vytalix.clinical.decision` | clinical |
+| `PaymentConfirmed` | `vytalix.commerce.payment` | commerce |
+
+> **Regla invariante:** **un evento pertenece a exactamente un dominio (leaf).** El dominio determina dueño, clase de privacidad y elegibilidad de tránsito a partner (§10.5).
+
+## 10.3 Event Naming Standard (Phase 3)
+
+- **`eventType`** = `<Aggregate><PastTenseVerb>`, PascalCase (código manda). Verbos **solo pasado**: Created/Added/Updated/Generated/Computed/Reviewed/Confirmed/Assessed/Triggered.
+- **Namespace** = `vytalix.<raíz>.<subdominio>` lowercase-dotted, **singular** (`observation`, no `observations`), máx. 3 niveles. `vytalix` es el root reverse-DNS que habilita namespaces de partner futuros (`disglobal.*` — que Vytalix **nunca** emite).
+- **Tense:** pasado (hecho inmutable). **Pluralización:** sustantivo de agregado en singular.
+- **Ownership por bounded context:** `clinical.*`→Core Clinical; `commerce.*`→Partner/Commercial; `platform.*`→Platform; `identity.*`→Identity; `intelligence.*`/`analytics.*`→reservados.
+- **Nombres prohibidos:** (a) `dot.lowercase` como *eventType* (los rotos `funnel.assessment.completed` etc., §3); (b) verbos imperativos/presente/gerundio (`CreatePatient`, `PatientCreates`, `Creating`); (c) genéricos sin agregado (`Event`, `Update`, `Changed`); (d) prefijo de servicio/transporte (`ApiPatientCreated`, `KafkaX`).
+- **Extensibilidad futura:** nuevos subdominios bajo raíces existentes sin nuevo eje (`clinical.genomics`, `commerce.insurance`).
+
+## 10.4 Canonical Contract — matriz de campos (Phase 4)
+
+**Estado actual (hecho, `event-bus.ts:26-32`):** el envelope tiene 6 campos + `eventType` + `payload`. Clasificación de los campos evaluados:
+
+| Campo | Clasificación | En código hoy | Justificación |
+|---|---|---|---|
+| `eventId` | **Mandatory** | ✅ | Identidad + idempotencia; sellado por el bus (`:154`). |
+| `eventType` | **Mandatory** | ✅ | Discriminador (§8.3). |
+| `version` / `schemaVersion` | **Mandatory (unificados)** | ✅ (`version`) | Un solo campo; **no** duplicar `schemaVersion` (evitar dos versiones). |
+| `tenantId` | **Mandatory** | ✅ | Frontera de aislamiento dura (§8.5). |
+| `correlationId` | **Mandatory** | ✅ | Traza de request. |
+| `occurredAt` | **Mandatory** | ✅ | ISO-8601 UTC (§8.4). |
+| `causationId` | **Recommended** (por ADR) | ❌ | Cadena causal para auditoría clínica (gap Important §5). |
+| `producer` / `sourceSystem`(evento) | **Recommended** (por ADR) | ❌ | `source` de CloudEvents/EventBridge (§10.6). *(Distinto de `ObservationAdded.payload.sourceSystem`, que es provenance del dato clínico, no del evento.)* |
+| `aggregateId` | **Recommended (formalizar)** | ⚠️ de-facto (`patientId`/`subjectRef`) | Habilita partición/replay durable. |
+| `aggregateType` | **Recommended** | ❌ | Compañero de `aggregateId` (`'Patient'`,`'Payment'`); routing. |
+| `subjectRef` | **Contextual** | ✅ en `PaymentConfirmed` | **Mandatory** en eventos de frontera partner (pseudónimo HMAC); **Forbidden como id crudo** en clínicos internos (usan `patientId`). |
+| `privacyClassification` | **Recommended (nuevo)** | ❌ | Etiqueta de privacidad legible por máquina en el envelope → el transporte aplica redacción/routing automático en la frontera Disglobal (§10.5). Alto valor de integración. |
+| `clinicalClassification` | **Optional/Future** | ⚠️ (`loincCode` en payload) | Flag clínico-vs-derivado; hoy vive en payload (LOINC). Opcional en envelope. |
+| `traceId` (OTel) | **Future** | ❌ | Mapear `correlationId`→traceId en la frontera de observabilidad. |
+| `partitionKey` | **Future** | ❌ | Para transporte durable (EventBridge/Kinesis); derivar de `aggregateId`+`tenantId`. |
+| `idempotencyKey` | **Optional (= `eventId`)** | ⚠️ | Usar `eventId` como clave de idempotencia (§8.7); campo separado redundante salvo clave provista por partner. |
+
+**Forbidden en cualquier evento:** `userId` crudo de Disglobal; PHI cruda (nombre/DOB/MRN legible) en envelope; datos de presentación; estado completo del agregado.
+
+> Todo cambio a esta matriz (añadir `causationId`/`producer`/`aggregateId`/`privacyClassification` al `BaseEvent`) es **cambio de contrato gobernado por ADR** (§8.9). **No se implementa en B1.5.**
+
+## 10.5 Privacy Architecture (Phase 5)
+
+**Clases:** PHI · PII · Financial · Clinical-derived · Operational · Pseudonymized · Anonymous.
+
+| Dominio / evento | Clase dominante | ¿Sale del tenant? | ¿Partner (Disglobal) puede recibir? | Transformación obligatoria |
+|---|---|---|---|---|
+| `clinical.patient` (`PatientCreated`: patientId, mrn, orgId) | PHI-adyacente (mrn) + id interno | **No** | **No** | `mrn`/`patientId` nunca salen |
+| `clinical.observation` (loincCode, valueNumeric) | **PHI clínica** | **No** | **No** (crudo) | solo derivados/agregados salen |
+| `clinical.risk` / `clinical.longevity` / `clinical.decision` | **Clinical-derived** | interno crudo | **Solo score derivado** (bioAge, riskCategory) sobre sujeto pseudonimizado | hash del sujeto |
+| `commerce.payment` (`subjectRef`, amount) | **Financial + Pseudonymized** | `subjectRef` cruza | **Sí** (subjectRef, amount, product) | `subjectRef` = HMAC-SHA256 |
+| `commerce.referral` (`ReferralTriggered`) | Pseudonymized clínico-adyacente | cruza como pseudónimo | **Sí** (pseudonimizado; tipo/urgencia) | HMAC subjectRef; **sin** patientId |
+| `platform.audit` | Operational (referencia ids) | **No** | **No** | interno |
+
+**Reglas de tránsito:**
+- **Nunca viaja:** `patientId`, `mrn`, PHI cruda (nombre/DOB), `userId` crudo de Disglobal, valores de observación crudos hacia el partner.
+- **Debe hashearse:** identidad de sujeto que cruza al partner → `subjectRef = HMAC-SHA256(userId, tenantSecret)` (evidencia: `disglobal-client.pseudonymize()`).
+- **Debe cifrarse (Future):** cualquier evento sobre transporte de red (EventBridge) → límite de cifrado de payload.
+- **Se queda en el tenant:** todo payload `clinical.*` crudo; `tenantId` lo garantiza (§8.5).
+- **El partner puede recibir:** `subjectRef` pseudonimizado + scores derivados + confirmación de pago + tipo/urgencia de referral. **Nada de detalle clínico crudo.**
+
+> **Habilitador de integración:** el campo `privacyClassification` (§10.4, Recommended) haría estas reglas **ejecutables por el transporte** — el bus/EventBridge redacta o bloquea automáticamente según la etiqueta antes de cruzar a Disglobal. Es la pieza que convierte esta matriz de política en enforcement.
+
+## 10.6 Interoperability — compatibilidad semántica (Phase 6)
+
+> Solo compatibilidad semántica; **sin forzar implementación.**
+
+| Estándar | Compatibilidad | Evidencia | Alineación futura (sin impl) |
+|---|---|---|---|
+| **CloudEvents** | **Alta** | `eventType≈type`, `eventId≈id`, `occurredAt≈time` | añadir `producer`=`source`, `specversion`, `subject`(=subjectRef) en la frontera |
+| **AWS EventBridge** | **Diseñado-para** | stub `eventType→DetailType`, `event→Detail` (`event-bus.ts:205-223`); publish/subscribe transport-agnostic (`:4-5`) | mapear namespace de dominio → `source`; `aggregateType`→routing |
+| **OpenTelemetry** | Media | `correlationId≈trace` (no traceId/spanId) | mapear `correlationId`→`traceId` en boundary |
+| **LOINC** | **Nativa/presente** | `ObservationAdded.loincCode` (`event-bus.ts:47`); decision.engine cita LOINC 2089-1/2085-9/2345-7 (`decision.engine.ts:223-225`) | ya alineado para observaciones |
+| **FHIR R4** | **Parcial/legacy** | FHIR-like solo en `src/legacy/` (`ingestion_service.ts:60` "FHIR R4 types", `external.handler.ts:113` `fhirResourceId`); **NO** en eventos tipados | Future: refs FHIR como extensión `clinical.*`; `ObservationAdded`→FHIR Observation |
+| **HL7 v2** | Baja | no en código | solo gateway futuro |
+| **SNOMED** | Ausente | no en código | extensión de codificación clínica futura |
+
+> **Hecho:** LOINC ya es nativo del modelo (código); FHIR es **aspiracional/legacy** (solo `src/legacy`), no parte del contrato de eventos canónico. El namespace de dominio (§10.2) es el mapeo natural a `source` de CloudEvents/EventBridge.
+
+## 10.7 Scalability — absorción de modalidades futuras (Phase 7)
+
+**Prueba:** ¿la taxonomía absorbe cada modalidad futura **sin rediseño** (mismo envelope, mismo naming, nuevo subdominio)?
+
+| Modalidad futura | Encaja en | ¿Rediseño? |
+|---|---|---|
+| Genomics / Epigenetics / Proteomics / Metabolomics | `clinical.genomics`, `clinical.omics.*` (nuevo subdominio) | **No** |
+| Digital Twins | `clinical.patient` (extiende `PatientModelUpdated`) | **No** |
+| Medical Devices / Wearables | `clinical.observation` (device-sourced; `payload.sourceSystem` ya existe) o `clinical.device` | **No** — provenance ya anticipada |
+| Imaging | `clinical.imaging` | **No** |
+| Dentistry | `clinical.dental` (`src/dental` ya existe) | **No** |
+| Nutrition | `clinical.nutrition` | **No** |
+| Precision Medicine | `clinical.*` + `intelligence.*` | **No** |
+| AI Agents | `intelligence.agent` (reservado) | **No** |
+| Research / Clinical Trials | `analytics.research`, `clinical.trial` | **No** |
+| Insurance | `commerce.insurance` (`openapi/vytalix_insurtech_v1.yaml` ya existe) | **No** — `commerce` absorbe |
+| Marketplace | `commerce.marketplace` | **No** |
+
+> **Conclusión (Phase 7):** las 6 raíces + subdominios + namespaces reservados absorben **todas** las modalidades listadas sin rediseño. El envelope es agnóstico de modalidad; `payload.sourceSystem` ya anticipa dispositivos/wearables; `commerce` ya tiene evidencia de insurtech. La taxonomía es **future-proof por construcción**.
+
+## 10.8 Semantic Evolution Strategy (Phase 8)
+
+- **Conceptos estables (nunca cambian):** las 6 raíces de dominio; los 6 campos Mandatory del envelope; `eventType` PascalCase past-tense; aislamiento por `tenantId`; pseudonimización `subjectRef`; invariante transport-agnostic publish/subscribe.
+- **Extensiones futuras probables:** subdominios `clinical.omics/imaging/device`; activación de `intelligence.*` y `analytics.*`; `commerce.insurance/marketplace`; campos de envelope `causationId`/`producer`/`aggregateId`/`privacyClassification`.
+- **Namespaces reservados (reclamados ahora, vacíos):** `intelligence.*`, `analytics.*`, `identity.*`, `clinical.genomics.*`, `clinical.imaging.*`, `clinical.device.*`, `commerce.insurance.*`, `commerce.marketplace.*`. Reservar previene colisiones de nombres.
+- **Estrategia de deprecación** (referencia §8.6, no se repite): aditiva dentro de major; deprecar-no-borrar; coexistencia old+new hasta migrar todos los consumidores; versión **por-evento**.
+- **Evolución de versión:** añadir campos = misma major; quitar/retipar = nueva major (nuevo eventType o `version:'2.0'`).
+- **Reglas de compatibilidad:** consumidores **ignoran** campos desconocidos (forward-compat); productores **nunca** quitan campos dentro de una major (backward-compat); un `eventType` **nunca** se renombra en producción.
+
+---
+
+> **STOP.** Modelo (§1–§7) **+ contrato** (§8) **+ arquitectura de dominio semántico** (§10) consolidados en un único artefacto canónico, derivados del código fuente. Cero código/runtime/EventBus/tipos/eventos modificados (typecheck 36 sin cambio). Cero documentos nuevos; se extendió el canónico. Toda recomendación que requiera runtime/implementación/nuevos eventos/APIs queda **documentada, no implementada**, esperando autorización explícita.

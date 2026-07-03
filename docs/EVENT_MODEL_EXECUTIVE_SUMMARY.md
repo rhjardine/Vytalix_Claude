@@ -107,4 +107,57 @@ Cada regla se etiqueta **[R]** normativa-hoy (presente en el código) / **[+]** 
 
 ---
 
-> **STOP.** Consolidación A2+A3 completada. Modelo **y contrato** en un único artefacto canónico. Sin implementación; esperando ADR-EventBus ACCEPTED + input de negocio + autorización de runtime.
+---
+
+## B1.5 addendum — Event Domain Architecture (arquitectura de dominio semántico)
+
+**En una frase:** B1.5 definió, **desde el código** y sin crear ningún documento nuevo, la arquitectura de dominio permanente que todo evento futuro debe seguir — extendiendo el artefacto canónico ([CANONICAL_EVENT_MODEL.md](./CANONICAL_EVENT_MODEL.md) §10) con taxonomía, matriz de campos, matriz de privacidad, interoperabilidad, escalabilidad y evolución.
+
+**Salida requerida (12 puntos):**
+
+1. **Evidencia de repositorio:** LOINC nativo (`handlers.ts:131`, `decision.engine.ts:223-225`); FHIR solo en `src/legacy/` (`ingestion_service.ts:60`); EventBridge stub (`event-bus.ts:205-223`); 7 eventType PascalCase (`event-bus.ts:34-110`); insurtech OpenAPI (`openapi/vytalix_insurtech_v1.yaml`).
+2. **Artefactos reutilizados:** `CANONICAL_EVENT_MODEL.md` (extendido §10), `ADR_EVENTBUS.md`, `EVENTBUS_*`, `EVENT_CHAIN_CLASSIFICATION/BACKLOG`, `ROADMAP_V2.md` (referenciados).
+3. **NO duplicados intencionalmente:** no nuevo ADR, no nueva gobernanza, no nuevos docs de EventBus, no nuevo Roadmap, no segundo Canonical Event Model, no `EVENT_DOMAIN_ARCHITECTURE.md` separado (se extendió el canónico).
+4. **Nuevas decisiones arquitectónicas:** (a) 6 dominios raíz; (b) capa de *namespace de dominio* `dot.lowercase` **ortogonal** al `eventType` PascalCase (resuelve el conflicto de naming sin renombrar código); (c) `privacyClassification` como campo Recommended que hace ejecutable la matriz de privacidad; (d) namespaces reservados.
+5. **Taxonomía semántica:** `clinical · commerce · identity · platform · intelligence · analytics` (6 raíces); los 23 candidatos evaluados → merge/split/absorb/reserve (§10.2). Un evento = exactamente un dominio.
+6. **Naming convention:** `eventType`=`<Aggregate><PastVerb>` PascalCase (código manda); namespace=`vytalix.<raíz>.<subdominio>` lowercase-dotted singular; prohibidos y extensibilidad definidos (§10.3).
+7. **Contrato canónico:** matriz de 18 campos → Mandatory (6, en código) / Recommended (causationId, producer, aggregateId/Type, privacyClassification) / Optional / Forbidden / Future (§10.4).
+8. **Modelo de privacidad:** matriz dominio×clase×tránsito; qué nunca viaja, qué se hashea, qué se cifra, qué puede recibir Disglobal (§10.5).
+9. **Interoperabilidad:** CloudEvents (alta), EventBridge (diseñado-para), LOINC (nativa), FHIR (parcial/legacy), OTel (media), HL7/SNOMED (futuras) — solo compatibilidad semántica (§10.6).
+10. **Escalabilidad:** 11 modalidades futuras (genomics, wearables, imaging, insurance, AI agents…) absorbidas **sin rediseño** bajo raíces/subdominios existentes (§10.7).
+11. **Riesgos:** ver tabla abajo.
+12. **Próximo sprint de implementación:** ver recomendación abajo.
+
+**Reconciliación clave (código > documentación):** el enunciado ejemplificaba `dot.lowercase` como estándar de nombre; el código usa PascalCase. Se resolvió **sin regresión**: PascalCase permanece como `eventType`; `dot.lowercase` se adopta como *namespace de dominio* (eje ortogonal para EventBridge/routing/privacidad). Ningún evento renombrado.
+
+### Riesgos (B1.5)
+
+| Riesgo | Naturaleza | Mitigación |
+|---|---|---|
+| Interpretar la capa namespace como rename de `eventType` | Regresión de A3/código | §10.1 lo declara ortogonal; eventType inmutable |
+| Añadir campos de envelope (`causationId`/`privacyClassification`) sin ADR | Cambio de contrato no gobernado | Todo cambio de `BaseEvent` pasa por ADR (§8.9/§10.4) |
+| Reservar namespaces que luego no se usen | Entropía menor | Reserva es barata; previene colisiones |
+| Confundir `payload.sourceSystem` (provenance) con `producer` (evento) | Modelado erróneo | §10.4 los separa explícitamente |
+
+### Próximo sprint de implementación recomendado
+
+**Ninguna implementación en B1.5.** El siguiente sprint funcional (con autorización de runtime + input de negocio) debe, en este orden: **(1)** ejecutar el backlog de migración ([EVENT_MIGRATION_BACKLOG.md](./EVENT_MIGRATION_BACKLOG.md)) W1→W4; **(2)** un ADR de envelope que promueva `causationId`+`producer`+`aggregateId`+`privacyClassification` de Recommended a Mandatory; **(3)** el ADR de transporte de producción (EventBridge) que active el mapeo namespace→`source` y el enforcement de privacidad. Todo gated en autorización explícita.
+
+## Sección final requerida (B1.5) — validación
+
+| Ítem | Estado | Evidencia |
+|---|---|---|
+| Sin documentación duplicada | ✅ | 0 docs nuevos; se extendió `CANONICAL_EVENT_MODEL.md` §10 |
+| Sin ADR duplicado | ✅ | `ADR_EVENTBUS.md` referenciado, no recreado |
+| Sin gobernanza duplicada | ✅ | ninguna tocada |
+| Sin docs de EventBus duplicados | ✅ | `EVENTBUS_*` referenciados |
+| Sin Roadmap duplicado | ✅ | `ROADMAP_V2.md` referenciado |
+| Sin Canonical Event Model duplicado | ✅ | **es** el canónico, extendido |
+| Sin cambios de runtime/código/tipos | ✅ | typecheck **36** sin cambio; solo 2 `.md` |
+| Sin implementación de EventBus / eventos nuevos | ✅ | 0 código |
+| Sin regresiones arquitectónicas | ✅ | PascalCase eventType preservado (§10.1) |
+| Repo byte-idéntico salvo documentación | ✅ | `git status`: solo `docs/*.md` |
+
+---
+
+> **STOP.** Consolidación A2+A3+B1.5 completada. Modelo **+ contrato + arquitectura de dominio** en un único artefacto canónico. Sin implementación; toda recomendación de runtime/eventos/APIs queda documentada esperando autorización explícita.
