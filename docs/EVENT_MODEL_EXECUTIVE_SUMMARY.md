@@ -1,13 +1,13 @@
 # EVENT_MODEL_EXECUTIVE_SUMMARY.md
-> **Vytalix Platform — Sprint A2 · Executive Summary: Canonical Event Model**
+> **Vytalix Platform — Executive Summary: Canonical Event Model & Contract (A2 + A3)**
 
 | Campo | Valor |
 |---|---|
-| Sprint | A2 — Canonical Event Model Discovery & Consolidation |
+| Sprint | A2 — Canonical Event Model · **A3 — Canonical Event Contract** |
 | Modo | Análisis/consolidación; **cero cambios de código** |
-| Fecha | 2026-06 |
+| Fecha | 2026-06/07 |
 
-> Documento canónico: [CANONICAL_EVENT_MODEL.md](./CANONICAL_EVENT_MODEL.md). Este es el único executive summary del sprint (no duplica el de plataforma [EXECUTIVE_SUMMARY.md](./EXECUTIVE_SUMMARY.md)).
+> Documento canónico: [CANONICAL_EVENT_MODEL.md](./CANONICAL_EVENT_MODEL.md) — ahora catálogo (§1–§7) **+ contrato semántico** (§8) + trazabilidad (§9). Este es el único executive summary del modelo/contrato (no duplica el de plataforma [EXECUTIVE_SUMMARY.md](./EXECUTIVE_SUMMARY.md)).
 
 ---
 
@@ -68,4 +68,43 @@ Prerequisito inalterado (de A1): **confirmación de negocio** del alcance por-ca
 | Una fuente canónica identificada | ✅ (`src/platform/event-bus.ts`) |
 | Cada recomendación trazable a evidencia | ✅ |
 
-> **STOP.** Consolidación completada. Sin implementación; esperando ADR-EventBus ACCEPTED + input de negocio + autorización de runtime.
+---
+
+## A3 addendum — Canonical Event Contract (la constitución semántica)
+
+**En una frase:** A3 formalizó, **desde el código** y sin crear ningún documento nuevo, las reglas semánticas que todo evento Vytalix debe obedecer — extendiendo el artefacto canónico existente ([CANONICAL_EVENT_MODEL.md](./CANONICAL_EVENT_MODEL.md) §8) en vez de duplicarlo.
+
+**Las 9 áreas del contrato (§8.1–§8.9):** Filosofía (hechos pasados inmutables, desacople productor↔consumidor) · Semántica de dominio (un evento = un bounded context + un agregado) · Naming (**PascalCase past-tense** obligatorio; `dot.lowercase` prohibido) · Envelope (`BaseEvent`; el bus sella id/tiempo/version, el emisor provee tenant/correlation/payload) · Privacidad (`tenantId` frontera dura; `subjectRef` pseudónimo hacia afuera; ids internos, nunca PHI cruda) · Versionado (`version` desde el día uno; evolución aditiva + deprecación gobernada) · Confiabilidad (síncrono in-process best-effort; aislamiento de fallos; **idempotencia en el consumidor por `eventId`**) · Interoperabilidad (**transport-agnostic = invariante fundacional**; `emit/on` prohibido; objetivo CloudEvents/EventBridge/OTel/FHIR) · Gobernanza (código > doc; un concepto/un artefacto; cambios por ADR).
+
+Cada regla se etiqueta **[R]** normativa-hoy (presente en el código) / **[+]** recomendada (requiere ADR) / **[F]** futura (transporte durable). Las reglas [R] son candidatas a enforcement por AEK.
+
+**North Star (integración):** la invariante transport-agnostic (`event-bus.ts:4-5`), la pseudonimización de frontera (`subjectRef`) y la estabilidad de nombres son precisamente lo que habilita la fase Disglobal/partners/clínica sin tocar el core.
+
+## Sección final requerida (A3) — reutilizado / actualizado / intacto / creado / duplicados / evidencia / B1
+
+| Ítem | Resultado A3 |
+|---|---|
+| **Reutilizado** | `src/platform/event-bus.ts` (fuente de verdad, leído/citado, sin tocar). |
+| **Actualizado** | `CANONICAL_EVENT_MODEL.md` (+§8 contrato, +§9 trazabilidad) y este summary (+addendum A3). |
+| **Intacto (referenciado)** | `ADR_EVENTBUS.md`, `EVENTBUS_CURRENT_ARCHITECTURE/OPTION_ANALYSIS/MIGRATION_PLAN`, `ARCHITECTURE_DEPENDENCY_GRAPH`, `EXECUTIVE_DECISION_SUMMARY`. |
+| **Nuevos creados** | **Cero.** Búsqueda previa (`git grep` event contract/naming/philosophy/governance) → sin artefacto equivalente → se extendió el canónico. |
+| **Duplicados evitados** | No `CANONICAL_EVENT_CONTRACT.md` separado; no nuevo ADR/roadmap/matriz/gobernanza; repo **más simple** (un artefacto = catálogo + contrato). |
+| **Evidencia por regla** | Cada [R] cita `event-bus.ts:línea` en §8; anti-patrón naming verificado por `git grep` de `emit(` ad-hoc. |
+| **Recomendaciones B1** | (1) input de negocio por-cadena (bloqueante); (2) renombrar/eliminar `dot.lowercase`; (3) añadir `causationId`+`producer` al `BaseEvent` por ADR; (4) cablear consumidores idempotentes por `eventId`; (5) diferir CloudEvents/OTel/FHIR/event-store al ADR de transporte. |
+
+## Validation checklist (A3)
+
+| Ítem | Estado |
+|---|---|
+| Zero producción/código modificado | ✅ (solo 2 docs) |
+| Zero cambios de runtime (typecheck 36) | ✅ |
+| Zero rediseño de EventBus | ✅ |
+| Zero documentación duplicada | ✅ (0 docs nuevos; se extendió el canónico) |
+| Un solo contrato semántico autoritativo | ✅ (§8, 9 áreas) |
+| Repositorio más simple que antes | ✅ (catálogo+contrato en 1 artefacto) |
+| Cada regla trazable a evidencia de repo | ✅ (`event-bus.ts:línea` por [R]) |
+| Facilita fase de integración (North Star) | ✅ (reglas *(→ integración)* anotadas) |
+
+---
+
+> **STOP.** Consolidación A2+A3 completada. Modelo **y contrato** en un único artefacto canónico. Sin implementación; esperando ADR-EventBus ACCEPTED + input de negocio + autorización de runtime.
