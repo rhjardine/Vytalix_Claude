@@ -151,7 +151,7 @@ export async function handleSubmitLead(req: Request, res: Response) {
   const tenantId = DEFAULT_TENANT()
 
   // Anti-spam: bloquear mismo email en últimas 24h para el mismo tenant
-  const recent = await db.rawQuery(
+  const recent = await db.rawQuery<{ id: string }>(
     `SELECT id FROM funnel_leads
      WHERE email = $1
        AND "tenantId" = $2::uuid
@@ -160,15 +160,15 @@ export async function handleSubmitLead(req: Request, res: Response) {
     [d.email.toLowerCase(), tenantId],
   )
 
-  if (recent.rows.length > 0) {
+  if (recent.length > 0) {
     // Responder 200 con el ID existente — no revelar que es duplicado (privacidad)
     return res.status(200).json({
-      data: { id: recent.rows[0].id, status: 'EXISTING' },
+      data: { id: recent[0].id, status: 'EXISTING' },
       meta: { correlationId: id, timestamp: new Date().toISOString() },
     })
   }
 
-  const result = await db.rawQuery(
+  const result = await db.rawQuery<{ id: string }>(
     `INSERT INTO funnel_leads (
       "tenantId", name, email, organization, phone, country,
       "interestType", message, source,
@@ -197,7 +197,7 @@ export async function handleSubmitLead(req: Request, res: Response) {
 
   return res.status(201).json({
     data: {
-      id:                    result.rows[0].id,
+      id:                    result[0].id,
       status:                'NEW',
       confirmationEmailSent: false, // TODO: integrar servicio de email
     },
@@ -221,7 +221,7 @@ export async function handleSubmitAssessment(req: Request, res: Response) {
   const db       = getDb()
   const tenantId = DEFAULT_TENANT()
 
-  const result = await db.rawQuery(
+  const result = await db.rawQuery<{ id: string }>(
     `INSERT INTO vitality_assessments (
       "tenantId", score, category, "yearsBiological", "chronologicalAgeGroup",
       "dimEnergiaEstadoMental", "dimSuenoCognicion", "dimComposicionCorporal",
@@ -255,7 +255,7 @@ export async function handleSubmitAssessment(req: Request, res: Response) {
   )
 
   return res.status(201).json({
-    data: { id: result.rows[0].id },
+    data: { id: result[0].id },
     meta: { correlationId: id, timestamp: new Date().toISOString() },
   })
 }
@@ -309,7 +309,7 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
   const db       = getDb()
   const tenantId = DEFAULT_TENANT()
 
-  const result = await db.rawQuery(
+  const result = await db.rawQuery<{ id: string }>(
     `INSERT INTO facial_analyses (
       "tenantId", "estimatedAge", confidence, "analysisPoints",
       status, provider, "imageHash", "analyzedAt", "leadId"
@@ -326,7 +326,7 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
 
   return res.json({
     data: {
-      id:             result.rows[0].id,
+      id:             result[0].id,
       estimatedAge,
       confidence,
       analysisPoints: 24,
