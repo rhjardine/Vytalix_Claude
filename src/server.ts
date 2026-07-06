@@ -24,7 +24,7 @@ import {
 
 // ── Routers ───────────────────────────────────────────────────────
 import { createExternalV2Router } from './api/handlers/external-v2.handler'
-// import { createFunnelRouter, createExchangeRateHandler } from './api/handlers/funnel.handler'
+import { createFunnelRouter } from './api/handlers/funnel.handler'
 import { createBillingAdminRouter } from './api/handlers/billing-admin.handler'
 import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './api/pipelines/pipeline-v2.orchestrator'
 import { createPaymentWebhookRouter } from './api/handlers/payment-webhook.handler'
@@ -131,7 +131,7 @@ app.get('/metrics',   metricsHandler)
 app.get('/metrics/prometheus', prometheusHandler)
 
 // ── Public Funnel API (no auth) ───────────────────────────────────
-// app.use('/api/funnel',        createFunnelRouter())
+app.use('/api/funnel', createFunnelRouter())
 // app.use('/api/exchange-rate', createExchangeRateHandler())
 
 // ── External API v2 (API Key auth — Disglobal + partners) ────────

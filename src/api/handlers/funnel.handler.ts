@@ -13,7 +13,7 @@
 // Validación: Zod en cada handler — falla rápido con 422 descriptivo
 // =============================================================================
 
-import { Request, Response } from 'express'
+import { Request, Response, Router } from 'express'
 import { z, ZodError }       from 'zod'
 import { randomUUID, createHash } from 'crypto'
 import { getDb }             from '../../platform/db'
@@ -419,4 +419,19 @@ export async function handleBooking(req: Request, res: Response) {
     },
     meta: { correlationId: id, timestamp: new Date().toISOString() },
   })
+}
+
+// =============================================================================
+// ROUTER — wires the public funnel handlers (no auth; correlationId is set
+// globally in server.ts before routes). Route paths mirror the OpenAPI
+// contract (/api/funnel/*).
+// =============================================================================
+
+export function createFunnelRouter(): Router {
+  const router = Router()
+  router.post('/leads',                handleSubmitLead)       // Lead capture
+  router.post('/vitality-assessment',  handleSubmitAssessment) // Preventive Questionnaire
+  router.post('/facial-analysis',      handleFacialAnalysis)   // Facial Scanner
+  router.post('/booking',              handleBooking)          // Medical Consultation
+  return router
 }
