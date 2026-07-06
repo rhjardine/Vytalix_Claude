@@ -593,6 +593,67 @@ paths:
                   period:               { type: string }
                   generatedAt:          { type: string, format: date-time }
 
+  /api/v2/catalog:
+    get:
+      tags: [Catalog]
+      summary: Vytalix Commercial Catalog API — Therapies and nutraceutical combos
+      operationId: getCommercialCatalog
+      description: |
+        Returns the commercial catalog of longevity therapies and nutraceutical
+        combos. Global product listing (no PHI, not tenant-scoped). Optional
+        `category` filters therapies.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [PAIN_MANAGEMENT, WELLNESS, PERFORMANCE, METABOLIC, LONGEVITY, VITALITY, NEURO, AESTHETIC]
+      responses:
+        "200":
+          description: Commercial catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      version: { type: string, example: "1.0.0" }
+                      therapies:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            code:      { type: string, example: "ANTI_AGING" }
+                            name:      { type: string, example: "Anti Aging" }
+                            category:  { type: string, example: "LONGEVITY" }
+                            kind:      { type: string, example: "THERAPY" }
+                            active:    { type: boolean }
+                            listPrice:
+                              type: object
+                              nullable: true
+                              properties:
+                                amountMinor: { type: integer }
+                                currency:    { type: string, example: "USD" }
+                      nutraceuticals:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            code:       { type: string, example: "ANTI_AGING_COMBO" }
+                            name:       { type: string, example: "Anti Aging Combo" }
+                            kind:       { type: string, example: "NUTRACEUTICAL_COMBO" }
+                            components: { type: array, items: { type: string } }
+                            active:     { type: boolean }
+                  meta:
+                    type: object
+                    properties:
+                      correlationId: { type: string }
+                      timestamp:     { type: string, format: date-time }
+
   # ── Admin ─────────────────────────────────────────────────────────
 
   /admin/tenants/{tenantId}/api-keys:

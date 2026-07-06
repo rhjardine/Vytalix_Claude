@@ -26,6 +26,7 @@ import { withTenant, getDb } from '../../platform/db'
 import { logger } from '../../platform/logger'
 import { getRedisClient } from '../../platform/redis'
 import { requireApiKey } from '../middlewares/api-key.middleware'
+import { getCommercialCatalog, listTherapies, TherapyCategory } from '../../longevity/therapy-catalog'
 
 // ─────────────────────────────────────────────────────────────────
 // Auth middleware — API Key resolution
@@ -308,6 +309,24 @@ export function createExternalV2Router(): Router {
       } catch (err: any) {
         return res.status(500).json(problemDetail(500, err.message, req.correlationId))
       }
+    }
+  )
+
+  // ── GET /api/v2/catalog ───────────────────────────────────────────
+  // Commercial catalog of therapies + nutraceutical combos.
+  // Global product listing (no PHI, no tenant data) — API-key authenticated.
+  // Optional ?category= filters therapies by TherapyCategory.
+  router.get(
+    '/catalog',
+    apiKeyAuth('catalog:read'),
+    (req: Request, res: Response) => {
+      const category = req.query.category as TherapyCategory | undefined
+      const catalog = getCommercialCatalog()
+      const therapies = category ? listTherapies(category) : catalog.therapies
+      return res.json({
+        data: { version: catalog.version, therapies, nutraceuticals: catalog.nutraceuticals },
+        meta: { correlationId: req.correlationId, timestamp: new Date().toISOString() },
+      })
     }
   )
 
