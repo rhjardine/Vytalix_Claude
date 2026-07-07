@@ -96,6 +96,9 @@ ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "consentMarketing"      BOOLEA
 ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "consentDataProcessing" BOOLEAN;
 -- The public handler does not set currentStep; relax the constraint (funnel.service still sets it).
 ALTER TABLE funnel_leads ALTER COLUMN "currentStep" DROP NOT NULL;
+-- updatedAt is Prisma @updatedAt (application-level, NO db default) + NOT NULL; the raw-SQL
+-- public handler does not set it, so give it a DB default (Prisma writers still set it explicitly).
+ALTER TABLE funnel_leads ALTER COLUMN "updatedAt" SET DEFAULT now();
 -- Public handler emits status 'NEW'; add it to the enum (additive, idempotent).
 ALTER TYPE "FunnelStatus" ADD VALUE IF NOT EXISTS 'NEW';
 
