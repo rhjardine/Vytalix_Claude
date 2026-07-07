@@ -444,11 +444,23 @@ model FunnelLead {
   utmCampaign   String?  @db.VarChar(100)
   utmMedium     String?  @db.VarChar(100)
   status        FunnelStatus @default(CAPTURED)
-  currentStep   String   @db.VarChar(50)   // "landing"|"vitality_test"|"results"|"booking"
+  currentStep   String?  @db.VarChar(50)   // optional: public funnel handler does not set it
   convertedToPatientId String? @db.Uuid    // Set when lead becomes patient
   lastActivityAt DateTime? @db.Timestamptz
   createdAt     DateTime @default(now()) @db.Timestamptz
-  updatedAt     DateTime @updatedAt @db.Timestamptz
+  updatedAt     DateTime @default(now()) @updatedAt @db.Timestamptz  // db default for raw-SQL writers
+
+  // ── Public funnel handler columns (src/api/handlers/funnel.handler.ts) ──
+  name          String?  @db.VarChar(200)
+  organization  String?  @db.VarChar(255)
+  country       String?  @db.VarChar(2)
+  interestType  String?  @db.VarChar(50)
+  message       String?  @db.Text
+  referralCode  String?  @db.VarChar(50)
+  vitalityAssessmentId String? @db.Uuid
+  facialAnalysisId     String? @db.Uuid
+  consentMarketing      Boolean?
+  consentDataProcessing Boolean?
 
   assessments   FunnelAssessment[]
   bookings      FunnelBooking[]
@@ -615,6 +627,7 @@ enum FunnelStatus {
   BOOKED
   CONVERTED
   LOST
+  NEW      // emitted by the public funnel lead handler
 }
 
 enum BookingStatus {

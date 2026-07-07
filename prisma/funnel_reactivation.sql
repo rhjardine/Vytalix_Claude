@@ -1,20 +1,22 @@
 -- =============================================================================
 -- prisma/funnel_reactivation.sql
--- Sprint F1 — Funnel Reactivation.
+-- Funnel — raw-SQL vertical tables + RLS (companion to schema.prisma).
 --
--- Provisions the tables that src/api/handlers/funnel.handler.ts writes to via
--- raw SQL and that were never migrated: vitality_assessments (Preventive
--- Questionnaire), facial_analyses (Facial Scanner), bookings (Medical
--- Consultation). Also makes funnel_leads compatible with the public
--- lead-capture handler (additive columns + FunnelStatus 'NEW' value).
+-- OWNERSHIP (P0.5 decision):
+--   • schema.prisma OWNS the funnel_leads columns, currentStep optionality,
+--     updatedAt default and the FunnelStatus 'NEW' value — do NOT alter those
+--     Prisma-managed objects here (that caused schema drift; now reconciled in
+--     schema.prisma).
+--   • This file OWNS only what Prisma cannot express or model as a vertical:
+--     the three raw-SQL tables the funnel handler writes to via db.rawQuery
+--     (vitality_assessments, facial_analyses, bookings) + their tenant RLS.
+--     Same pattern as the dental vertical (raw-SQL tables outside schema.prisma).
 --
--- Invariants preserved:
---   • RLS — each new table gets tenant_isolation (same USING policy as the
---     platform tables in migration_rls.sql).
---   • Multi-tenancy — every row is tenantId-scoped.
---   • Idempotent — safe to re-apply (IF NOT EXISTS / IF NOT EXISTS values).
+-- Invariants: tenant_isolation RLS (same USING policy as migration_rls.sql);
+-- multi-tenancy (tenantId on every row); idempotent (IF NOT EXISTS).
 --
--- Apply in a DB-connected environment:  psql "$DATABASE_URL" -f prisma/funnel_reactivation.sql
+-- Apply via:  pnpm db:funnel   (or: psql "$DATABASE_URL" -f prisma/funnel_reactivation.sql)
+-- Deployment order: db:migrate → prisma db push (schema.prisma) → db:rls → db:funnel
 -- =============================================================================
 
 -- ── Preventive Questionnaire (vitality self-assessment) ──────────────
@@ -82,25 +84,9 @@ CREATE TABLE IF NOT EXISTS bookings (
 CREATE INDEX IF NOT EXISTS idx_bookings_tenant_created
   ON bookings ("tenantId", "createdAt" DESC);
 
--- ── funnel_leads: make the public lead-capture handler compatible ────
--- Additive only — existing columns (used by funnel.service) are untouched.
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS name                    VARCHAR(200);
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS organization            VARCHAR(255);
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS country                 VARCHAR(2);
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "interestType"          VARCHAR(50);
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS message                 TEXT;
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "referralCode"          VARCHAR(50);
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "vitalityAssessmentId"  UUID;
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "facialAnalysisId"      UUID;
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "consentMarketing"      BOOLEAN;
-ALTER TABLE funnel_leads ADD COLUMN IF NOT EXISTS "consentDataProcessing" BOOLEAN;
--- The public handler does not set currentStep; relax the constraint (funnel.service still sets it).
-ALTER TABLE funnel_leads ALTER COLUMN "currentStep" DROP NOT NULL;
--- updatedAt is Prisma @updatedAt (application-level, NO db default) + NOT NULL; the raw-SQL
--- public handler does not set it, so give it a DB default (Prisma writers still set it explicitly).
-ALTER TABLE funnel_leads ALTER COLUMN "updatedAt" SET DEFAULT now();
--- Public handler emits status 'NEW'; add it to the enum (additive, idempotent).
-ALTER TYPE "FunnelStatus" ADD VALUE IF NOT EXISTS 'NEW';
+-- NOTE: funnel_leads columns, currentStep optionality, updatedAt default and
+-- FunnelStatus 'NEW' are now declared in schema.prisma (single source of truth)
+-- and applied by `prisma db push` — intentionally NOT altered here (drift fix).
 
 -- ── RLS — tenant isolation on the new tables (same pattern as platform) ──
 ALTER TABLE vitality_assessments ENABLE ROW LEVEL SECURITY;

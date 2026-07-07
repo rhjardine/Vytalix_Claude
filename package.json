@@ -18,6 +18,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:rls": "psql $DATABASE_URL -f prisma/migration_rls.sql",
+    "db:funnel": "psql $DATABASE_URL -f prisma/funnel_reactivation.sql",
+    "db:setup": "prisma db push && pnpm db:rls && pnpm db:funnel",
     "db:seed": "ts-node --project tsconfig.server.json src/demo/seed-demo.ts",
     "db:studio": "prisma studio",
     "auth:bootstrap": "ts-node --project tsconfig.server.json src/auth/bootstrap.ts",
