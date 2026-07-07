@@ -36,6 +36,7 @@
     "ci": "pnpm sandbox:test && DATABASE_URL=${DATABASE_URL:-postgresql://localhost:5432/ci} pnpm exec prisma validate && pnpm aek:check"
   },
   "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.1080.0",
     "@prisma/client": "^5.7.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
