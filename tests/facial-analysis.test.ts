@@ -107,6 +107,14 @@ describe('facial-analysis — aws provider (VISION_PROVIDER=aws)', () => {
       .rejects.toMatchObject({ statusCode: 502, message: 'Facial analysis provider unavailable' })
   })
 
+  it('throws 504 when AWS exceeds REKOGNITION_TIMEOUT_MS', async () => {
+    process.env.REKOGNITION_TIMEOUT_MS = '20'
+    mockSend = vi.fn().mockImplementation(() => new Promise(() => { /* never resolves */ }))
+    await expect(analyzeFace({ imageBase64: 'x', correlationId: 'c5' }))
+      .rejects.toMatchObject({ statusCode: 504 })
+    delete process.env.REKOGNITION_TIMEOUT_MS
+  })
+
   it('falls back to mock when FACIAL_FALLBACK_MOCK=true and the provider fails', async () => {
     process.env.FACIAL_FALLBACK_MOCK = 'true'
     mockSend = vi.fn().mockRejectedValue(new Error('boom'))
