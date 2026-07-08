@@ -183,8 +183,11 @@ describe('Disglobal Integration Sandbox — Event Transitions', () => {
     })
 
     it('is deterministic — same input produces same event types and payloads', () => {
-      const s1 = new FunnelSimulator().simulate(STANDARD_INPUT)
-      const s2 = new FunnelSimulator().simulate(STANDARD_INPUT)
+      // Fixed clock so timestamped payloads (paidAt/activatedAt) are stable
+      // across runs — isolates true determinism from wall-clock drift.
+      const fixedNow = () => new Date('2026-01-01T00:00:00.000Z')
+      const s1 = new FunnelSimulator({ now: fixedNow }).simulate(STANDARD_INPUT)
+      const s2 = new FunnelSimulator({ now: fixedNow }).simulate(STANDARD_INPUT)
 
       expect(s1.completed).toBe(s2.completed)
       expect(s1.events.map(e => e.type)).toEqual(s2.events.map(e => e.type))

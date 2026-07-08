@@ -9,6 +9,14 @@ import { EventChainBuilder } from './event-chain'
 import type { BiometricMeasurements, ClinicalFlowInput, FunnelState } from '../types'
 
 export class FunnelSimulator {
+  // Injected clock — defaults to the real clock; a fixed clock makes the
+  // simulation fully deterministic (honours this file's determinism contract).
+  private readonly now: () => Date
+
+  constructor(deps: { now?: () => Date } = {}) {
+    this.now = deps.now ?? (() => new Date())
+  }
+
   simulate(input: ClinicalFlowInput): FunnelState {
     const builder = new EventChainBuilder(input.sessionId, input.subjectRef)
 
@@ -41,14 +49,14 @@ export class FunnelSimulator {
       })
       .emit('PAYMENT_CONFIRMED', {
         transactionId: `txn_${input.sessionId.slice(-8)}`,
-        paidAt: new Date().toISOString(),
+        paidAt: this.now().toISOString(),
       })
       .emit('APPOINTMENT_BOOKED', {
         appointmentId: `appt_${input.sessionId.slice(-8)}`,
         specialty: 'PREVENTIVE',
       })
       .emit('SERVICE_ACTIVATED', {
-        activatedAt: new Date().toISOString(),
+        activatedAt: this.now().toISOString(),
         plan: 'LONGEVITY_BASIC',
       })
 
