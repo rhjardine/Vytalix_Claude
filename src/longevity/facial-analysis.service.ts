@@ -38,10 +38,15 @@ function providerError(message: string, statusCode: number): Error {
   return Object.assign(new Error(message), { statusCode })
 }
 
-// Reject a promise if it does not settle within `ms` (no extra dependency).
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+// Reject a promise if it does not settle within `ms`. On timeout it also aborts
+// the optional controller so the underlying request is actually cancelled
+// (not just abandoned) — avoids a hung AWS call leaking resources/cost.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string, controller?: AbortController): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(providerError(`${label} timed out after ${ms}ms`, 504)), ms)
+    const t = setTimeout(() => {
+      controller?.abort()
+      reject(providerError(`${label} timed out after ${ms}ms`, 504))
+    }, ms)
     p.then(v => { clearTimeout(t); resolve(v) }, e => { clearTimeout(t); reject(e) })
   })
 }
@@ -97,9 +102,14 @@ export const awsRekognitionProvider: FacialAnalysisProvider = {
       Attributes: ['AGE_RANGE'],
     })
 
+    // AbortController cancels the in-flight request if the timeout fires.
+    const controller = new AbortController()
     let response: any
     try {
-      response = await withTimeout(client.send(command), timeoutMs, 'AWS Rekognition')
+      response = await withTimeout(
+        client.send(command, { abortSignal: controller.signal }),
+        timeoutMs, 'AWS Rekognition', controller,
+      )
     } catch (err: any) {
       if (err?.statusCode === 504) {
         logger.warn({ correlationId, provider: 'aws' }, 'AWS Rekognition timed out')
