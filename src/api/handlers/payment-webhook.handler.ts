@@ -9,16 +9,20 @@
 //   Header: X-Disglobal-Signature (hex-encoded HMAC)
 //   Secret: DISGLOBAL_WEBHOOK_SECRET env var
 //
-// Idempotency: Redis key `webhook:idempotency:{intentId}` — TTL 24h
-//   Replayed webhooks return 200 without re-processing.
-//
-// On success → publishes PaymentConfirmed event → payment pipeline activates.
+// Transactional guarantee (Sprint P1-J — Financial Trust Shield):
+//   The DB is the single source of truth. Persistence is synchronous inside
+//   withTenant(): HTTP 200 is emitted ONLY after a successful COMMIT; a DB/commit
+//   failure returns HTTP 500 (Disglobal retries). Idempotency is DB-authoritative
+//   via UNIQUE("intentId") + ON CONFLICT DO NOTHING RETURNING id (a replay yields
+//   no row → 200 without re-processing). The EventBus is strictly post-commit,
+//   best-effort: publishing (→ pipeline activation/notification) happens after the
+//   200 and can never condition the financial result.
 // =============================================================================
 
 import { Router, Request, Response } from 'express'
 import crypto from 'node:crypto'
 import { z } from 'zod'
-import { getRedisClient } from '../../platform/redis'
+import { withTenant } from '../../platform/db'
 import { logger } from '../../platform/logger'
 import { publish } from '../../platform/event-bus'
 
@@ -61,18 +65,8 @@ function verifySignature(payload: Record<string, unknown>, incomingSignature: st
   }
 }
 
-// ── Idempotency via Redis ──────────────────────────────────────────
-
-const IDEMPOTENCY_TTL_SECONDS = 86_400 // 24h
-
-async function checkAndMarkIdempotent(intentId: string): Promise<boolean> {
-  const redis = getRedisClient()
-  const key = `webhook:idempotency:${intentId}`
-  const existing = await redis.get(key).catch(() => null)
-  if (existing) return false
-  await redis.setex(key, IDEMPOTENCY_TTL_SECONDS, new Date().toISOString()).catch(() => {})
-  return true
-}
+// Idempotency is DB-authoritative: UNIQUE("intentId") + ON CONFLICT DO NOTHING
+// RETURNING id (see handler). Redis is intentionally NOT on the correctness path.
 
 // ── Request schema ─────────────────────────────────────────────────
 
@@ -99,7 +93,7 @@ function problemDetail(status: number, detail: string, correlationId: string) {
   }
 }
 
-async function handlePaymentWebhook(req: Request, res: Response): Promise<void> {
+export async function handlePaymentWebhook(req: Request, res: Response): Promise<void> {
   const correlationId = (req as any).correlationId as string
 
   // 1. Parse and validate
@@ -119,43 +113,75 @@ async function handlePaymentWebhook(req: Request, res: Response): Promise<void> 
     return
   }
 
-  // 3. Idempotency check
-  const isNew = await checkAndMarkIdempotent(body.intentId)
-  if (!isNew) {
-    logger.info({ correlationId, intentId: body.intentId }, 'Webhook replayed — skipping')
-    res.status(200).json({ received: true, replayed: true })
+  // 3. Non-confirmed events carry no financial state — acknowledge, no persistence.
+  if (body.event !== 'payment.confirmed') {
+    logger.info({ correlationId, intentId: body.intentId, event: body.event }, 'Webhook received (no action)')
+    res.status(200).json({ received: true, replayed: false })
     return
   }
 
-  // 4. Route by event type
-  if (body.event === 'payment.confirmed') {
-    // Resolve tenantId — webhooks are scoped to the API key tenant
-    // In production this comes from the API key resolution middleware
-    const tenantId = (req as any).apiKeyCtx?.tenantId
-      ?? process.env.DEFAULT_FUNNEL_TENANT_ID
-      ?? 'a1b2c3d4-0000-4000-8000-000000000001'
+  // Resolve tenantId — webhooks are scoped to the API key tenant (middleware).
+  const tenantId = (req as any).apiKeyCtx?.tenantId
+    ?? process.env.DEFAULT_FUNNEL_TENANT_ID
+    ?? 'a1b2c3d4-0000-4000-8000-000000000001'
 
-    publish.paymentConfirmed(
-      { tenantId, correlationId },
-      {
-        intentId:   body.intentId,
-        subjectRef: body.subjectRef,
-        amount:     body.amount,
-        currency:   body.currency,
-        product:    body.metadata['product'] ?? 'UNKNOWN',
-        metadata:   body.metadata,
-      },
+  // 4. Durable, ACID persistence INSIDE withTenant — the COMMIT is the single
+  //    source of truth for a confirmed payment. Idempotency is DB-authoritative:
+  //    UNIQUE("intentId") + ON CONFLICT DO NOTHING RETURNING id. A replayed webhook
+  //    hits the conflict → no row returned → acknowledged without re-processing.
+  let inserted: { id: string } | null
+  try {
+    inserted = await withTenant(tenantId, (tc) => tc.queryOne<{ id: string }>(
+      `INSERT INTO payment_transactions
+         ("tenantId", "intentId", "subjectRef", amount, currency, product, status, "correlationId", metadata)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       ON CONFLICT ("intentId") DO NOTHING
+       RETURNING id`,
+      [tenantId, body.intentId, body.subjectRef, body.amount, body.currency,
+       body.metadata['product'] ?? 'UNKNOWN', 'CONFIRMED', correlationId, JSON.stringify(body.metadata)],
+    ))
+  } catch (err) {
+    // DB/commit failed → payment is NOT recorded. Never ack success, never publish.
+    // Respond 500 so Disglobal retries. Log critically WITHOUT leaking DB internals
+    // or stack traces into the HTTP response body.
+    logger.error(
+      { correlationId, intentId: body.intentId, errName: (err as any)?.name },
+      'CRITICAL: payment persistence failed — returning 500 for Disglobal retry',
     )
-
-    logger.info(
-      { correlationId, intentId: body.intentId, subjectRef: body.subjectRef, amount: body.amount },
-      'PaymentConfirmed event published',
-    )
-  } else {
-    logger.info({ correlationId, intentId: body.intentId, event: body.event }, 'Webhook received (no action)')
+    res.status(500).json(problemDetail(500, 'Payment could not be recorded; please retry', correlationId))
+    return
   }
 
-  res.status(200).json({ received: true, replayed: false })
+  // 5. COMMIT succeeded → the row is the financial truth. Acknowledge FIRST.
+  res.status(200).json({ received: true, replayed: inserted === null })
+
+  // 6. Post-commit, best-effort. Publish ONLY for a newly-inserted row so a replay
+  //    can never double-activate/notify. A publish failure never affects the
+  //    financial result (already committed and acknowledged).
+  if (inserted) {
+    try {
+      publish.paymentConfirmed(
+        { tenantId, correlationId },
+        {
+          intentId:   body.intentId,
+          subjectRef: body.subjectRef,
+          amount:     body.amount,
+          currency:   body.currency,
+          product:    body.metadata['product'] ?? 'UNKNOWN',
+          metadata:   body.metadata,
+        },
+      )
+      logger.info(
+        { correlationId, intentId: body.intentId, subjectRef: body.subjectRef, amount: body.amount },
+        'Payment committed → PaymentConfirmed published (post-commit)',
+      )
+    } catch (err) {
+      logger.error(
+        { correlationId, intentId: body.intentId, errName: (err as any)?.name },
+        'Post-commit publish failed — payment is recorded; activation deferred to reconciliation',
+      )
+    }
+  }
 }
 
 // ── Router ─────────────────────────────────────────────────────────

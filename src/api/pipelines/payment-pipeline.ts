@@ -66,7 +66,11 @@ async function activateServiceAccess(
   return true
 }
 
-// ── Pipeline handler ───────────────────────────────────────────────
+// ── Pipeline handler (POST-COMMIT, best-effort) ────────────────────
+// The payment_transactions row is already committed by the webhook handler
+// (the single source of truth). This subscriber only runs for a newly-inserted
+// payment (the webhook publishes solely on a fresh row), so it is safe to treat
+// the payment as existing and perform best-effort activation + notification.
 
 async function handlePaymentConfirmed(event: PaymentConfirmedEvent): Promise<void> {
   const { correlationId, tenantId, payload } = event
@@ -74,10 +78,10 @@ async function handlePaymentConfirmed(event: PaymentConfirmedEvent): Promise<voi
 
   logger.info(
     { correlationId, intentId, subjectRef, tenantId, amount, product },
-    'PaymentConfirmed → payment pipeline started',
+    'PaymentConfirmed → post-commit pipeline started',
   )
 
-  // Step 1: Activate service access
+  // Step 1: Activate service access (idempotent via Redis guard)
   const activated = await activateServiceAccess(subjectRef, tenantId, intentId, product, correlationId)
 
   // Step 2: Notify patient of payment confirmation (fire-and-forget)
@@ -101,7 +105,7 @@ async function handlePaymentConfirmed(event: PaymentConfirmedEvent): Promise<voi
   }
 
   logger.info(
-    { correlationId, intentId, subjectRef, activated },
+    { correlationId, intentId, subjectRef, activated, metric: 'payment_activated' },
     'PaymentConfirmed pipeline complete',
   )
 }
