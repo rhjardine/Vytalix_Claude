@@ -122,7 +122,7 @@ export class IngestionService {
 
     // Write audit log
         await withTenant(tenantId, async (tc) => {
-      await writeAuditLog(tx, {
+      await writeAuditLog(tc, {
         tenantId,
         actorId,
         actorRole: 'SYSTEM',

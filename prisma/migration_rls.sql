@@ -305,4 +305,6 @@ CREATE TRIGGER trg_immutable_billing
   BEFORE UPDATE OR DELETE ON billing_events
   FOR EACH ROW EXECUTE FUNCTION prevent_modification();
 
-RAISE NOTICE '✅ Vytalix RLS + TimescaleDB + triggers applied successfully';
+DO $$ BEGIN
+  RAISE NOTICE '✅ Vytalix RLS + TimescaleDB + triggers applied successfully';
+END $$;

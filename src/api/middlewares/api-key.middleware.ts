@@ -176,13 +176,27 @@ async function resolveKey(keyHash: string): Promise<ApiKeyContext | null> {
 
 // ── Brute-force protection ────────────────────────────────────────
 
+// In-process fallback counter — used ONLY when Redis is unavailable so
+// brute-force protection degrades (per instance, best-effort) instead of
+// switching off entirely. No new dependency; pruned on access.
+const localAuthFailures = new Map<string, { count: number; expiresAt: number }>()
+
+function localFailureCount(ip: string): number {
+  const now   = Date.now()
+  for (const [k, v] of localAuthFailures) if (v.expiresAt <= now) localAuthFailures.delete(k)
+  const entry = localAuthFailures.get(ip)
+  return entry && entry.expiresAt > now ? entry.count : 0
+}
+
 async function checkBruteForce(ip: string): Promise<boolean> {
   try {
     const redis  = getRedisClient()
     const count  = await redis.get(`authfail:${ip}`)
     return Number(count ?? 0) >= MAX_FAILURES_PER_IP
   } catch (_) {
-    return false // Redis unavailable — fail open (prefer availability over blocking)
+    // Redis unavailable — fall back to the in-process counter so the block
+    // still applies within this instance instead of failing fully open.
+    return localFailureCount(ip) >= MAX_FAILURES_PER_IP
   }
 }
 
@@ -191,7 +205,13 @@ async function recordFailure(ip: string): Promise<void> {
     const redis = getRedisClient()
     const key   = `authfail:${ip}`
     await redis.multi().incr(key).expire(key, FAIL_WINDOW_SECONDS).exec()
-  } catch (_) {}
+  } catch (_) {
+    // Mirror the failure locally so checkBruteForce keeps working while Redis is down.
+    const now   = Date.now()
+    const entry = localAuthFailures.get(ip)
+    if (entry && entry.expiresAt > now) entry.count += 1
+    else localAuthFailures.set(ip, { count: 1, expiresAt: now + FAIL_WINDOW_SECONDS * 1000 })
+  }
 }
 
 // ── Last-used tracking ────────────────────────────────────────────
