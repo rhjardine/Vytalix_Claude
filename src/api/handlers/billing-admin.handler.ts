@@ -17,7 +17,7 @@ import { z } from 'zod'
 import { getDb } from '../../platform/db'
 import { logger } from '../../platform/logger'
 import { generateApiKey } from '../middlewares/api-key.middleware'
-import { getMonthlyUsage, computeRevenueShare } from '../../platform/metering.service'
+import { getMonthlyUsage, computeRevenueShare, getUnitPriceCents } from '../../platform/metering.service'
 
 // ── Input schemas ─────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ export function createBillingAdminRouter(): Router {
 
     // Invalidate cached key metadata
     try {
-      const { getRedisClient } = await import('../lib/redis')
+      const { getRedisClient } = await import('../../platform/redis')
       const redis   = getRedisClient()
       const pattern = `apikey:*`
       // Note: in production use SCAN, not KEYS, for large keyspaces
@@ -114,12 +114,12 @@ export function createBillingAdminRouter(): Router {
     const usage = await getMonthlyUsage(tenantId, yearMonth)
     const total = usage['TOTAL'] ?? 0
 
-    // Compute estimated invoice
-    const { DEFAULT_UNIT_PRICES_CENTS } = await import('./metering.service') as any
+    // Compute estimated invoice — prices come from the metering module's public
+    // accessor; the price table stays private to its owner.
     let estimatedCents = 0
     for (const [op, count] of Object.entries(usage)) {
       if (op !== 'TOTAL') {
-        estimatedCents += (DEFAULT_UNIT_PRICES_CENTS[op] ?? 0) * (count as number)
+        estimatedCents += getUnitPriceCents(op) * (count as number)
       }
     }
 
