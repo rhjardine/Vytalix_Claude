@@ -283,6 +283,16 @@ export class VytalixClient {
     return `DISG-${hash}`
   }
 
+  // Narrow an unknown JSON error body to the two fields this client reads.
+  // Local to this class — property checks only, no casts.
+  private errorFields(data: unknown): { detail?: string; type?: string } {
+    if (typeof data !== 'object' || data === null) return {}
+    return {
+      detail: 'detail' in data && typeof data.detail === 'string' ? data.detail : undefined,
+      type:   'type'   in data && typeof data.type   === 'string' ? data.type   : undefined,
+    }
+  }
+
   private async post(path: string, body: unknown, idempotencyKey?: string): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -301,8 +311,9 @@ export class VytalixClient {
 
     const data = await res.json()
     if (!res.ok) {
-      throw Object.assign(new Error(data.detail ?? `Vytalix API error ${res.status}`), {
-        status: res.status, code: data.type, body: data,
+      const { detail, type } = this.errorFields(data)
+      throw Object.assign(new Error(detail ?? `Vytalix API error ${res.status}`), {
+        status: res.status, code: type, body: data,
       })
     }
     return data
@@ -315,7 +326,10 @@ export class VytalixClient {
       signal:  AbortSignal.timeout(this.timeout),
     })
     const data = await res.json()
-    if (!res.ok) throw Object.assign(new Error(data.detail ?? `Vytalix API error ${res.status}`), { status: res.status })
+    if (!res.ok) {
+      const { detail } = this.errorFields(data)
+      throw Object.assign(new Error(detail ?? `Vytalix API error ${res.status}`), { status: res.status })
+    }
     return data
   }
 }

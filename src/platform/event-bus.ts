@@ -132,6 +132,12 @@ export interface IEventBus {
     handler: (event: T) => Promise<void>
   ): void
   unsubscribe(eventType: VytalixEventType, handler: (...args: any[]) => void): void
+  // Untyped channel used by the platform's ad-hoc events (vitality.assessed,
+  // referral.triggered, referral.converted, funnel.lead.created). Consumers were
+  // already written against this EventEmitter-style API; it is declared here so
+  // the contract matches the implementation.
+  emit(eventType: string, payload: unknown): void
+  on(eventType: string, handler: (payload: any) => void | Promise<void>): void
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -185,6 +191,23 @@ class LocalEventBus implements IEventBus {
     }
 
     this.emitter.on(eventType, wrapped)
+  }
+
+  // Untyped ad-hoc channel — delegates to the same EventEmitter used by
+  // publish/subscribe. Handler errors are caught so a listener can never crash
+  // the emitting caller (same guarantee as subscribe()).
+  emit(eventType: string, payload: unknown): void {
+    this.emitter.emit(eventType, payload)
+  }
+
+  on(eventType: string, handler: (payload: any) => void | Promise<void>): void {
+    this.emitter.on(eventType, async (payload: any) => {
+      try {
+        await handler(payload)
+      } catch (err) {
+        logger.error({ eventType, err }, 'Event handler threw — event processing failed')
+      }
+    })
   }
 
   unsubscribe(eventType: VytalixEventType, handler: (...args: any[]) => void): void {
