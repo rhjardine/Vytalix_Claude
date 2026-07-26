@@ -286,7 +286,16 @@ export function createExternalV2Router(): Router {
 
       try {
         const patientId = body.patientId ?? await resolveSubjectRef(tenantId, body.subjectRef!)
-        await engagementSvc.recordEvents(tenantId, patientId, body.events, body.source)
+        // The schema requires `type` and defaults `payload` to {}, but the inferred
+        // type widens both to optional. Normalise to the domain shape here; the
+        // guard mirrors the schema and is unreachable while validation runs.
+        const events = body.events.map((e) => {
+          if (e.type === undefined) {
+            throw Object.assign(new Error('engagement event requires a type'), { statusCode: 422 })
+          }
+          return { type: e.type, payload: e.payload ?? {}, occurredAt: e.occurredAt }
+        })
+        await engagementSvc.recordEvents(tenantId, patientId, events, body.source)
         return res.status(202).json({ accepted: body.events.length, patientId })
       } catch (err: any) {
         return res.status(err.statusCode ?? 500).json(problemDetail(err.statusCode ?? 500, err.message, req.correlationId))
