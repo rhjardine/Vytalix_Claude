@@ -35,25 +35,47 @@ make check
 # 4. Levantar demo
 make demo
 # Dashboard:   http://localhost:3000/dashboard
-# API health:  http://localhost:3001/health
-# Demo status: http://localhost:3001/demo/status
+# API health:  http://localhost:3001/readiness
+# API docs:    http://localhost:3001/docs
 ```
 
 ## Auth para pruebas API
 
-```bash
-# Obtener token
-curl -s -X POST http://localhost:3001/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dr.martinez@grupo919.health","password":"Demo2024!"}' | jq .token
+La API expone dos modelos de acceso:
 
-# Usar token
-curl http://localhost:3001/v1/patients \
-  -H "Authorization: Bearer <token>" \
-  -H "X-Tenant-ID: a1b2c3d4-0000-4000-8000-000000000001"
+```bash
+# 1. Funnel público — sin autenticación
+curl -X POST http://localhost:3001/api/funnel/leads \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Hans Muller","email":"hans@example.com",
+       "interestType":"LONGEVIDAD_CLINICA","source":"HERO_CTA",
+       "consentMarketing":true,"consentDataProcessing":true}'
+
+# 2. API v2 para partners — cabecera X-API-Key
+curl http://localhost:3001/api/v2/insights/cohort \
+  -H "X-API-Key: <tu-api-key>"
 ```
 
-## Integración externa (Disglobal / partners)
+Las API keys se emiten desde los endpoints administrativos
+(`/admin/tenants/{tenantId}/api-keys`, documentados en `/docs`).
+El webhook de pago no usa API key: se autentica por firma HMAC (ver abajo).
+
+## Integración externa — Doctor Antivejez / Marketplace Vita App (Disglobal)
+
+Este repositorio es el **Vytalix Clinical Intelligence Engine**, el proveedor
+tecnológico. El producto comercializado en el **Marketplace Vita App** de
+Disglobal es **Doctor Antivejez**, cuyos servicios del MVP Fase 1 son:
+
+1. Escáner Facial (Biometría AWS Rekognition)
+2. Cuestionario Preventivo Estructurado (Evaluación Express)
+3. Consulta Médica Online (Teleconsulta)
+4. Consulta Médica Presencial
+5. Derivación Clínica
+6. Flujo de Pago Integrado B2B (Split Payments)
+
+> **Aviso obligatorio:** la Evaluación Digital Preventiva es una aproximación
+> conductual y de hábitos. **No constituye un diagnóstico médico y no sustituye
+> la consulta médica presencial.**
 
 Con la plataforma levantada (`make demo`), un integrador no necesita leer el
 código fuente:

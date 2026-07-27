@@ -1,11 +1,26 @@
 openapi: "3.1.0"
 info:
-  title: Vytalix Health Intelligence Platform API
+  title: Doctor Antivejez API
   version: "2.0.0"
   description: |
-    API-first preventive health intelligence platform.
-    Powered by Doctor Antivejez clinical algorithms.
-    
+    API de los servicios **Doctor Antivejez**, distribuidos a través del
+    **Marketplace Vita App** de Disglobal.
+
+    Infraestructura provista por el **Vytalix Clinical Intelligence Engine**
+    (proveedor tecnológico; no es el producto comercializado).
+
+    **Servicios del MVP Fase 1:**
+    1. Escáner Facial (Biometría AWS Rekognition)
+    2. Cuestionario Preventivo Estructurado (Evaluación Express)
+    3. Consulta Médica Online (Teleconsulta)
+    4. Consulta Médica Presencial
+    5. Derivación Clínica
+    6. Flujo de Pago Integrado B2B (Split Payments)
+
+    > **Aviso obligatorio:** la Evaluación Digital Preventiva es una aproximación
+    > conductual y de hábitos. **No constituye un diagnóstico médico y no sustituye
+    > la consulta médica presencial.**
+
     **Authentication:**
     - Public funnel endpoints: No auth required
     - Partner APIs (/api/v2/*): `X-API-Key` header
@@ -30,9 +45,9 @@ tags:
   - name: Health
     description: Platform health and observability
   - name: Funnel
-    description: Public lead capture and vitality assessment (no auth)
-  - name: BioAge
-    description: Vytalix BioAge API — Biological age assessment
+    description: Captación de interesados y Cuestionario Preventivo Estructurado (sin autenticación)
+  - name: Preventive Assessment
+    description: Evaluación Digital Preventiva — estimación preventiva a partir de mediciones declaradas
   - name: Preventive
     description: Vytalix Preventive Score API — Composite health score
   - name: Referral
@@ -247,7 +262,7 @@ paths:
   /api/funnel/vitality-assessment:
     post:
       tags: [Funnel]
-      summary: "Step 2: Run biophysical age assessment"
+      summary: "Paso 2: Cuestionario Preventivo Estructurado (Evaluación Express)"
       operationId: funnelVitalityAssessment
       description: |
         Computes biological age using the Doctor Antivejez algorithm.
@@ -388,8 +403,8 @@ paths:
 
   /api/v2/vitality/assess:
     post:
-      tags: [BioAge]
-      summary: Vytalix BioAge API — Biological age assessment
+      tags: [Preventive Assessment]
+      summary: Evaluación Digital Preventiva — estimación preventiva
       operationId: assessBiologicalAge
       description: |
         Full biophysical age assessment using the Doctor Antivejez algorithm.
@@ -435,7 +450,7 @@ paths:
                     diastolicPressure:   { type: number }
       responses:
         "200":
-          description: Biological age assessed
+          description: Evaluación Digital Preventiva completada
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BiologicalAgeAssessmentResult' }
@@ -446,8 +461,8 @@ paths:
 
   /api/v2/vitality/{subjectRef}:
     get:
-      tags: [BioAge]
-      summary: Get latest biological age assessment
+      tags: [Preventive Assessment]
+      summary: Consultar la última Evaluación Digital Preventiva
       operationId: getLatestBiologicalAge
       security:
         - ApiKeyAuth: []

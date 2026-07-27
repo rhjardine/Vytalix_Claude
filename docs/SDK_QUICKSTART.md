@@ -1,7 +1,20 @@
-# Vytalix SDK — Quickstart para Disglobal
+# SDK Doctor Antivejez — Quickstart para Disglobal (Marketplace Vita App)
 
 > **Tiempo de integración estimado:** 1–3 horas de desarrollo backend  
 > **Prerequisito:** API Key provisionada por el equipo de Vytalix
+
+**Producto:** Doctor Antivejez · **Canal:** Marketplace Vita App (Disglobal) ·
+**Infraestructura:** Vytalix Clinical Intelligence Engine (proveedor tecnológico).
+
+> **Aviso obligatorio:** la Evaluación Digital Preventiva es una aproximación
+> conductual y de hábitos. **No constituye un diagnóstico médico y no sustituye
+> la consulta médica presencial.** Toda interfaz que muestre resultados debe
+> presentar este aviso.
+
+> **Nota sobre nombres del SDK:** algunos métodos y campos del SDK
+> (`assessBioAge`, `edadBiologica`) conservan la nomenclatura interna del motor
+> clínico. Son identificadores técnicos estables; el nombre comercial del
+> servicio es **Evaluación Digital Preventiva**.
 
 ---
 
@@ -35,15 +48,15 @@ export const vytalix = createVytalixClient(
 
 ---
 
-## Caso de uso 1 — Test de Edad Biológica (flujo principal)
+## Caso de uso 1 — Evaluación Digital Preventiva (flujo principal)
 
-El usuario completa el cuestionario de mediciones en la app Disglobal y tu backend llama a Vytalix:
+El usuario completa el Cuestionario Preventivo Estructurado en el Marketplace Vita App y tu backend llama a la API:
 
 ```typescript
 import { vytalix } from '../lib/vytalix'
 
-// En tu endpoint /api/health/bio-age
-async function calcularEdadBiologica(req, res) {
+// En tu endpoint de evaluación preventiva
+async function evaluacionDigitalPreventiva(req, res) {
   const { userId, mediciones } = req.body
 
   const resultado = await vytalix.assessBioAge({
@@ -74,7 +87,7 @@ async function calcularEdadBiologica(req, res) {
   await vytalix.registrarEvento({
     userId,
     tipo: 'TEST_COMPLETADO',
-    datos: { bioAge: resultado.edadBiologica, delta: resultado.diferencial }
+    datos: { estimacion: resultado.edadBiologica, delta: resultado.diferencial }
   })
 }
 ```
@@ -155,7 +168,7 @@ const insights = await vytalix.getInsightsDePoblacion({
 //   pctRejuvenecido: 38,
 //   pctEnvejecido: 22,
 //   topRiskSignals: [...],
-//   summary: "La cohorte muestra una edad biológica promedio acorde..."
+//   summary: "La cohorte muestra una estimación preventiva promedio acorde..."
 // }
 ```
 
