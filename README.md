@@ -53,6 +53,39 @@ curl http://localhost:3001/v1/patients \
   -H "X-Tenant-ID: a1b2c3d4-0000-4000-8000-000000000001"
 ```
 
+## Integración externa (Disglobal / partners)
+
+Con la plataforma levantada (`make demo`), un integrador no necesita leer el
+código fuente:
+
+| Recurso | URL |
+|---------|-----|
+| Documentación interactiva de la API | http://localhost:3001/docs |
+| Contrato OpenAPI (importable en Postman/Insomnia) | http://localhost:3001/openapi.yaml |
+
+### Webhook de pago (HMAC)
+
+`POST /api/v2/webhooks/payment` se autentica con una firma **HMAC-SHA256** en el
+campo `signature`, calculada sobre el cuerpo canónico con el secreto
+`DISGLOBAL_WEBHOOK_SECRET`. Hay dos ejemplos ejecutables que ya hacen ese cálculo:
+
+```bash
+# Node.js
+node scripts/examples/send-payment-webhook.js
+
+# curl + openssl
+./scripts/examples/send-payment-webhook.sh
+
+# Contra otro entorno
+BASE_URL=https://staging.vytalix.health \
+DISGLOBAL_WEBHOOK_SECRET=tu-secreto \
+node scripts/examples/send-payment-webhook.js
+```
+
+Respuestas: `200` el pago quedó registrado (COMMIT confirmado; `replayed: true`
+si el `intentId` ya existía) · `401` firma inválida · `500` no se registró,
+reintentar con el mismo `intentId` (la deduplicación lo hace seguro).
+
 ## Comandos
 
 | Comando | Descripción |

@@ -8,6 +8,7 @@ import express from 'express'
 import helmet  from 'helmet'
 import cors    from 'cors'
 import crypto  from 'node:crypto'
+import path    from 'node:path'
 
 import { logger }            from './platform/logger'
 import { checkDbHealth }     from './platform/db'
@@ -130,6 +131,45 @@ app.get('/health',    healthHandler)
 app.get('/metrics',   metricsHandler)
 app.get('/metrics/prometheus', prometheusHandler)
 
+// ── API documentation (public, no auth) ──────────────────────────
+// GET /openapi.yaml — canonical platform contract, downloadable/importable
+// GET /docs         — Redoc viewer rendering that same spec
+// Redoc is loaded from a CDN, so this single route widens the global CSP
+// (scriptSrc 'self') to allow that origin. No inline script is used and no
+// npm dependency is added.
+const OPENAPI_SPEC_PATH = path.join(__dirname, '..', 'openapi', 'vytalix-platform-v2.yaml')
+
+app.get('/openapi.yaml', (_req, res) => {
+  res.type('application/yaml').sendFile(OPENAPI_SPEC_PATH, (err) => {
+    if (err) res.status(404).json({ error: 'OpenAPI specification not found' })
+  })
+})
+
+app.get(
+  '/docs',
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", 'https://cdn.redoc.ly'],
+      workerSrc:  ["'self'", 'blob:'],
+      styleSrc:   ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc:    ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc:     ["'self'", 'data:'],
+    },
+  }),
+  (_req, res) => {
+    res.type('html').send(
+      `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>Vytalix Platform API</title>` +
+      `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `</head><body style="margin:0">` +
+      `<redoc spec-url="/openapi.yaml"></redoc>` +
+      `<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>` +
+      `</body></html>`,
+    )
+  },
+)
+
 // ── Public Funnel API (no auth) ───────────────────────────────────
 app.use('/api/funnel', createFunnelRouter())
 // app.use('/api/exchange-rate', createExchangeRateHandler())
@@ -191,6 +231,9 @@ app.listen(PORT, () => {
       'GET  /readiness',
       'GET  /health    (alias → /readiness)',
       'GET  /metrics',
+      // API documentation (public)
+      'GET  /docs        (Redoc viewer)',
+      'GET  /openapi.yaml',
       // Funnel API (public)
       'POST /api/funnel/leads',
       'POST /api/funnel/vitality-assessment',

@@ -43,6 +43,8 @@ tags:
     description: Vytalix Population Insights API — Anonymized cohort analytics
   - name: Admin
     description: Tenant management and billing (internal)
+  - name: Payments
+    description: Payment lifecycle webhooks (Disglobal)
 
 # ─── Security Schemes ────────────────────────────────────────────
 
@@ -552,6 +554,144 @@ paths:
                 properties:
                   accepted:  { type: integer }
                   patientId: { type: string }
+
+  /api/v2/webhooks/payment:
+    post:
+      tags: [Payments]
+      summary: Disglobal payment confirmation webhook
+      operationId: receivePaymentWebhook
+      # Not protected by an API key or JWT: authentication is the HMAC-SHA256
+      # `signature` field carried in the body (see description).
+      security: []
+      description: |
+        Receives payment lifecycle notifications from Disglobal.
+
+        **Authentication — HMAC-SHA256.** The request is not authenticated with an
+        API key. Instead, `signature` must be the hex-encoded HMAC-SHA256 of the
+        *canonical* JSON body, computed with the shared secret
+        (`DISGLOBAL_WEBHOOK_SECRET`). The canonical body is a JSON object built with
+        exactly these keys, in this order, excluding `signature`:
+
+        `event, intentId, amount, currency, timestamp, subjectRef, metadata`
+
+        Any deviation in key order or content produces a different digest and the
+        request is rejected with `401`. Comparison is timing-safe.
+
+        **Transactional guarantee.** The payment is persisted inside a database
+        transaction and `200` is returned **only after the COMMIT succeeds**. If
+        persistence fails the endpoint returns `500` and publishes no event, so the
+        caller must retry.
+
+        **Idempotency.** Deduplication is database-authoritative on `intentId`.
+        Replaying a webhook returns `200` with `replayed: true` and never
+        re-activates the service or re-notifies the patient. Retrying after a `500`
+        or a timeout is therefore always safe.
+
+        Only `payment.confirmed` performs work; `payment.failed` and
+        `payment.refunded` are acknowledged without side effects.
+
+        A runnable signing example lives in `scripts/examples/` (curl and Node.js).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, intentId, amount, currency, timestamp, subjectRef, signature]
+              properties:
+                event:
+                  type: string
+                  enum: [payment.confirmed, payment.failed, payment.refunded]
+                intentId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: Disglobal payment intent id — the idempotency key.
+                amount:
+                  type: integer
+                  minimum: 1
+                  description: Amount in minor units (cents).
+                currency:
+                  type: string
+                  minLength: 3
+                  maxLength: 3
+                  description: ISO 4217 code, e.g. "USD".
+                timestamp:
+                  type: string
+                  format: date-time
+                subjectRef:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: Pseudonymised buyer reference.
+                metadata:
+                  type: object
+                  additionalProperties: { type: string }
+                  default: {}
+                  description: String map. `product` selects the purchased service.
+                signature:
+                  type: string
+                  description: Hex-encoded HMAC-SHA256 of the canonical body.
+            examples:
+              paymentConfirmed:
+                summary: Confirmed payment for a facial scan
+                value:
+                  event: payment.confirmed
+                  intentId: intent-9f2c41
+                  amount: 4900
+                  currency: USD
+                  timestamp: "2026-07-27T14:05:00.000Z"
+                  subjectRef: DISG-8c1e5a
+                  metadata: { product: FACIAL_SCAN }
+                  signature: 3f1b9c0d5e...  # HMAC-SHA256 hex digest
+      responses:
+        "200":
+          description: |
+            Payment recorded (COMMIT succeeded) or already known. Safe to stop retrying.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received, replayed]
+                properties:
+                  received: { type: boolean, const: true }
+                  replayed:
+                    type: boolean
+                    description: true when this intentId was already recorded.
+              examples:
+                firstDelivery:
+                  value: { received: true, replayed: false }
+                replay:
+                  value: { received: true, replayed: true }
+        "400":
+          description: Payload failed schema validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+        "401":
+          description: Invalid HMAC signature.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+              example:
+                type: "https://api.vytalix.health/errors/401"
+                title: Unauthorized
+                status: 401
+                detail: Invalid webhook signature
+                correlationId: 7f3a1c92-0f4b-4e2a-9d61-2b8c5e0a1d34
+        "500":
+          description: |
+            Payment could NOT be recorded — no event was published. Retry with the
+            same `intentId`; deduplication makes the retry safe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemDetail" }
+              example:
+                type: "https://api.vytalix.health/errors/500"
+                title: Error
+                status: 500
+                detail: Payment could not be recorded; please retry
+                correlationId: 7f3a1c92-0f4b-4e2a-9d61-2b8c5e0a1d34
 
   /api/v2/insights/cohort:
     get:
