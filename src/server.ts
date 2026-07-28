@@ -29,7 +29,7 @@ import { createFunnelRouter } from './api/handlers/funnel.handler'
 import { createBillingAdminRouter } from './api/handlers/billing-admin.handler'
 import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './api/pipelines/pipeline-v2.orchestrator'
 import { createPaymentWebhookRouter } from './api/handlers/payment-webhook.handler'
-import { registerPaymentPipeline } from './api/pipelines/payment-pipeline'
+import { registerPaymentPipeline, reconcilePendingPayments } from './api/pipelines/payment-pipeline'
 
 // ── CFE Dental Routers (Sprint 2A — mounting previously orphaned routers) ──
 import { dentalAdminRouter }    from './dental/routers/dental-admin.router'
@@ -218,6 +218,14 @@ registerPaymentPipeline()
 setInterval(async () => {
   const flushed = await flushMeterStream()
   if (flushed > 0) logger.debug({ flushed }, 'Meter events flushed')
+}, 60_000)
+
+// ── Payment reconciliation sweep (every 60s) ──────────────────────
+// Re-publishes committed payments whose activation event was lost (EventBus
+// failure or process death after COMMIT). Idempotent by design.
+setInterval(async () => {
+  const reconciled = await reconcilePendingPayments()
+  if (reconciled > 0) logger.warn({ reconciled }, 'Stuck payments re-published for activation')
 }, 60_000)
 
 // ── Start ─────────────────────────────────────────────────────────
