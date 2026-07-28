@@ -139,7 +139,9 @@ export class VytalixClient {
       edadCronologica: input.age,
       diferencial:     data.differentialAge,
       estado:          data.ageStatus,
-      interpretacion:  data.interpretation,
+      // El runtime no emite `interpretation` en Fase 1; se normaliza a '' para
+      // respetar el tipo declarado (string) en lugar de entregar undefined.
+      interpretacion:  data.interpretation ?? '',
       edadesParciales: {
         grasa:       data.partialAges.fatAge,
         imc:         data.partialAges.bmiAge,
@@ -152,9 +154,9 @@ export class VytalixClient {
       },
       derivacion: data.referralCTA?.eligible ? {
         elegible:  true,
-        titular:   data.referralCTA.payload?.headline ?? '',
-        urlCta:    data.referralCTA.payload?.ctaUrl   ?? '',
-        urgencia:  data.referralCTA.payload?.urgencyLabel ?? '',
+        titular:   data.referralCTA.ctaPayload?.headline ?? '',
+        urlCta:    data.referralCTA.ctaPayload?.ctaUrl   ?? '',
+        urgencia:  data.referralCTA.ctaPayload?.urgencyLabel ?? '',
       } : undefined,
       evaluadoEn: data.assessedAt,
     }

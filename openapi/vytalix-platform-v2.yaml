@@ -140,6 +140,9 @@ components:
         differentialAge:  { type: number, example: -3.0 }
         ageStatus:        { $ref: '#/components/schemas/AgeStatus' }
         partialAges:      { $ref: '#/components/schemas/BiophysicsPartialAges' }
+        # NOTE (Fase 1): riskSignals y referralCTA NO se emiten en esta fase — el
+        # runtime no los incluye en la respuesta. La Derivación Clínica se obtiene
+        # por su endpoint dedicado: GET /api/v2/referral/{subjectRef}.
         riskSignals:      { type: array, items: { type: string } }
         referralCTA:      { $ref: '#/components/schemas/ReferralCTA', nullable: true }
         assessedAt:       { type: string, format: date-time }
@@ -373,31 +376,6 @@ paths:
                   status:    { type: string }
                   message:   { type: string }
                   nextSteps: { type: array, items: { type: string } }
-
-  /api/exchange-rate:
-    get:
-      tags: [Funnel]
-      summary: Currency exchange rate for international pricing
-      operationId: getExchangeRate
-      parameters:
-        - name: from
-          in: query
-          schema: { type: string, default: "USD" }
-        - name: to
-          in: query
-          schema: { type: string, default: "MXN" }
-      responses:
-        "200":
-          description: Exchange rate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  rate:      { type: number }
-                  from:      { type: string }
-                  to:        { type: string }
-                  updatedAt: { type: string, format: date-time }
 
   # ── BioAge API (X-API-Key) ────────────────────────────────────────
 

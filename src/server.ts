@@ -239,7 +239,6 @@ app.listen(PORT, () => {
       'POST /api/funnel/vitality-assessment',
       'POST /api/funnel/facial-analysis',
       'POST /api/funnel/booking',
-      'GET  /api/exchange-rate',
       // External API v2 (API Key — Disglobal + partners)
       'POST /api/v2/vitality/assess',
       'GET  /api/v2/vitality/:subjectRef',
