@@ -28,8 +28,23 @@ import { publish } from '../../platform/event-bus'
 
 // ── Webhook secret ─────────────────────────────────────────────────
 
+// The sandbox fallback exists so `make demo` and the example scripts work out
+// of the box. It is published in this repository, so it must never authenticate
+// a real payment: outside development/test the secret has to be provisioned.
+// server.ts already refuses to boot without it; this is the second barrier for
+// any process that reaches here another way.
 function getWebhookSecret(): string {
-  return process.env.DISGLOBAL_WEBHOOK_SECRET ?? 'sandbox-webhook-secret-v1'
+  const configured = process.env.DISGLOBAL_WEBHOOK_SECRET
+  if (configured && configured.trim() !== '') return configured
+
+  const env = process.env.NODE_ENV ?? 'development'
+  if (env !== 'development' && env !== 'test') {
+    throw Object.assign(
+      new Error('DISGLOBAL_WEBHOOK_SECRET is not configured'),
+      { statusCode: 500 },
+    )
+  }
+  return 'sandbox-webhook-secret-v1'
 }
 
 // ── Canonical body reconstruction (same field order as sandbox) ───
@@ -106,8 +121,21 @@ export async function handlePaymentWebhook(req: Request, res: Response): Promise
 
   const body = parsed.data
 
-  // 2. Verify HMAC signature
-  if (!verifySignature(req.body as Record<string, unknown>, body.signature)) {
+  // 2. Verify HMAC signature. A misconfigured secret must fail closed with a
+  //    controlled 500 — never an unhandled rejection, and never a 200.
+  let signatureValid: boolean
+  try {
+    signatureValid = verifySignature(req.body as Record<string, unknown>, body.signature)
+  } catch (err) {
+    logger.error(
+      { correlationId, intentId: body.intentId, errName: (err as any)?.name },
+      'CRITICAL: webhook secret is not configured — rejecting payment notification',
+    )
+    res.status(500).json(problemDetail(500, 'Webhook verification unavailable; please retry', correlationId))
+    return
+  }
+
+  if (!signatureValid) {
     logger.warn({ correlationId, intentId: body.intentId }, 'Webhook signature verification failed')
     res.status(401).json(problemDetail(401, 'Invalid webhook signature', correlationId))
     return

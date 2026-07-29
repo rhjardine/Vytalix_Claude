@@ -13,6 +13,7 @@ import path    from 'node:path'
 import { logger }            from './platform/logger'
 import { checkDbHealth }     from './platform/db'
 import { checkRedisHealth }  from './platform/redis'
+import { validateConfigOrExit } from './platform/config.validation'
 import { flushMeterStream }  from './platform/metering.service'
 import {
   healthHandler,
@@ -229,6 +230,10 @@ setInterval(async () => {
 }, 60_000)
 
 // ── Start ─────────────────────────────────────────────────────────
+// Refuses to boot outside development/test if a critical secret is missing or
+// still set to a value published in this repository.
+validateConfigOrExit()
+
 const PORT = Number(process.env.PORT ?? 3001)
 app.listen(PORT, () => {
   logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, '🚀 Vytalix Platform started')
