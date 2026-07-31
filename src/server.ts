@@ -192,7 +192,9 @@ app.use('/api/v2/dental/commerce', dentalTenantContext, dentalCommerceRouter)
 // ── CFE Dental API — Core (quotes, treatments, inventory check) ──
 app.use('/api/v2/dental/core',     dentalTenantContext, dentalCoreRouter)
 
-// ── Admin API (JWT auth — internal only) ─────────────────────────
+// ── Admin API (internal only) ────────────────────────────────────
+// The JWT + RBAC chain is mounted inside createBillingAdminRouter() so it
+// applies to every route of that router by construction.
 app.use('/admin', createBillingAdminRouter())
 
 // ── RFC 7807 Error handler (last middleware) ──────────────────────
