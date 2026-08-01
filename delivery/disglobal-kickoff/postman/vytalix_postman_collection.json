@@ -1,0 +1,189 @@
+{
+  "info": {
+    "name": "Doctor Antivejez API — Marketplace Vita App",
+    "description": "Requests aligned with the routes actually mounted by src/server.ts. Bodies follow the validation schemas enforced by the running handlers.\n\nSet the collection variables first:\n- base_url — http://localhost:3001 by default\n- api_key — partner API key, sent as X-API-Key on /api/v2 endpoints\n- webhook_secret — DISGLOBAL_WEBHOOK_SECRET, used by the payment webhook pre-request script\n\nAuth model: /api/funnel/* is public, /api/v2/* uses X-API-Key, and the payment webhook authenticates with an HMAC-SHA256 signature carried in the body (computed automatically by its pre-request script).\n\nLive contract: GET /openapi.yaml (raw spec) and GET /docs (rendered).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3001" },
+    { "key": "api_key", "value": "" },
+    { "key": "webhook_secret", "value": "sandbox-webhook-secret-v1" },
+    { "key": "subjectRef", "value": "DISG-8c1e5a" },
+    { "key": "webhook_body", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Observability & docs",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/liveness", "host": ["{{base_url}}"], "path": ["liveness"] } }
+        },
+        {
+          "name": "Readiness (DB + Redis)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/readiness", "host": ["{{base_url}}"], "path": ["readiness"] } }
+        },
+        {
+          "name": "OpenAPI specification",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/openapi.yaml", "host": ["{{base_url}}"], "path": ["openapi.yaml"] } }
+        }
+      ]
+    },
+    {
+      "name": "Funnel API (public, no auth)",
+      "item": [
+        {
+          "name": "Captación de interesado (lead)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Hans Muller\",\n  \"email\": \"hans@example.com\",\n  \"interestType\": \"LONGEVIDAD_CLINICA\",\n  \"source\": \"HERO_CTA\",\n  \"consentMarketing\": true,\n  \"consentDataProcessing\": true\n}" },
+            "url": { "raw": "{{base_url}}/api/funnel/leads", "host": ["{{base_url}}"], "path": ["api", "funnel", "leads"] }
+          }
+        },
+        {
+          "name": "Cuestionario Preventivo Estructurado (Evaluación Express)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"score\": 72,\n  \"category\": \"BUENO\",\n  \"yearsBiological\": 44,\n  \"chronologicalAgeGroup\": \"45\",\n  \"dimensions\": {\n    \"energiaEstadoMental\": 70,\n    \"suenoCognicion\": 65,\n    \"composicionCorporal\": 75,\n    \"signosEnvejecimiento\": 80,\n    \"rangoEdad\": 70\n  },\n  \"answersPayload\": { \"q1\": true, \"q2\": false },\n  \"completedAt\": \"2026-07-27T14:00:00.000Z\",\n  \"sessionId\": \"demo-session-1\"\n}" },
+            "url": { "raw": "{{base_url}}/api/funnel/vitality-assessment", "host": ["{{base_url}}"], "path": ["api", "funnel", "vitality-assessment"] }
+          }
+        },
+        {
+          "name": "Escáner Facial (Biometría AWS Rekognition)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "imageBase64 must be a base64-encoded image (min 100 chars, max ~2MB). The image is never stored: only a SHA-256 hash and the analytical result are persisted. Provider is selected by VISION_PROVIDER (mock by default).",
+            "body": { "mode": "raw", "raw": "{\n  \"imageBase64\": \"<base64-encoded image, at least 100 characters>\",\n  \"sessionId\": \"demo-session-1\"\n}" },
+            "url": { "raw": "{{base_url}}/api/funnel/facial-analysis", "host": ["{{base_url}}"], "path": ["api", "funnel", "facial-analysis"] }
+          }
+        },
+        {
+          "name": "Solicitud de Consulta Médica (Online / Presencial)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Hans Muller\",\n  \"email\": \"hans@example.com\",\n  \"consultationType\": \"EXPLORATORIA_LONGEVIDAD\",\n  \"specialistPreference\": \"longevity\",\n  \"preferredTime\": \"morning\"\n}" },
+            "url": { "raw": "{{base_url}}/api/funnel/booking", "host": ["{{base_url}}"], "path": ["api", "funnel", "booking"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "External API v2 (X-API-Key)",
+      "item": [
+        {
+          "name": "Evaluación Digital Preventiva — nueva estimación",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"subjectRef\": \"{{subjectRef}}\",\n  \"chronologicalAge\": 42,\n  \"biologicalSex\": \"MALE\",\n  \"measurements\": {\n    \"fatPercentage\": 22.5,\n    \"bmi\": 26.1,\n    \"digitalReflexes\": { \"high\": 12, \"long\": 10, \"width\": 8 },\n    \"visualAccommodation\": 18,\n    \"staticBalance\": { \"high\": 20, \"long\": 18, \"width\": 15 },\n    \"skinHydration\": 45,\n    \"systolicPressure\": 128,\n    \"diastolicPressure\": 82\n  }\n}" },
+            "url": { "raw": "{{base_url}}/api/v2/vitality/assess", "host": ["{{base_url}}"], "path": ["api", "v2", "vitality", "assess"] }
+          }
+        },
+        {
+          "name": "Evaluación Digital Preventiva — última estimación",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v2/vitality/{{subjectRef}}", "host": ["{{base_url}}"], "path": ["api", "v2", "vitality", "{{subjectRef}}"] }
+          }
+        },
+        {
+          "name": "Preventive — Composite score",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"subjectRef\": \"{{subjectRef}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v2/preventive/score", "host": ["{{base_url}}"], "path": ["api", "v2", "preventive", "score"] }
+          }
+        },
+        {
+          "name": "Derivación Clínica — evaluar CTA",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v2/referral/{{subjectRef}}", "host": ["{{base_url}}"], "path": ["api", "v2", "referral", "{{subjectRef}}"] }
+          }
+        },
+        {
+          "name": "Engagement — Record events",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{api_key}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"subjectRef\": \"{{subjectRef}}\",\n  \"events\": [\n    { \"type\": \"CTA_CLICK\", \"payload\": { \"campaign\": \"longevity\" } }\n  ],\n  \"source\": \"api\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v2/engagement/events", "host": ["{{base_url}}"], "path": ["api", "v2", "engagement", "events"] }
+          }
+        },
+        {
+          "name": "Insights — Cohort aggregate",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v2/insights/cohort", "host": ["{{base_url}}"], "path": ["api", "v2", "insights", "cohort"] }
+          }
+        },
+        {
+          "name": "Catalog — Service catalog",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/api/v2/catalog", "host": ["{{base_url}}"], "path": ["api", "v2", "catalog"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments (Disglobal webhook)",
+      "item": [
+        {
+          "name": "Flujo de Pago Integrado B2B — webhook confirmado (HMAC)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Build the canonical body and sign it with HMAC-SHA256.",
+                  "// Key order must match the server's canonicalBody() exactly:",
+                  "// event, intentId, amount, currency, timestamp, subjectRef, metadata",
+                  "const payload = {",
+                  "  event:      'payment.confirmed',",
+                  "  intentId:   'intent-' + Date.now(),",
+                  "  amount:     4900,",
+                  "  currency:   'USD',",
+                  "  timestamp:  new Date().toISOString(),",
+                  "  subjectRef: pm.collectionVariables.get('subjectRef') || 'DISG-8c1e5a',",
+                  "  metadata:   { product: 'FACIAL_SCAN' }",
+                  "};",
+                  "const canonical = JSON.stringify(payload);",
+                  "const secret = pm.collectionVariables.get('webhook_secret');",
+                  "const signature = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.collectionVariables.set('webhook_body', JSON.stringify(Object.assign({}, payload, { signature })));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Authenticated by the HMAC-SHA256 `signature` field, not by an API key. 200 = payment committed (replayed:true if the intentId already existed); 401 = signature mismatch; 500 = NOT recorded, retry the same intentId (deduplication makes it safe).",
+            "body": { "mode": "raw", "raw": "{{webhook_body}}" },
+            "url": { "raw": "{{base_url}}/api/v2/webhooks/payment", "host": ["{{base_url}}"], "path": ["api", "v2", "webhooks", "payment"] }
+          }
+        }
+      ]
+    }
+  ]
+}
