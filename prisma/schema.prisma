@@ -288,6 +288,8 @@ model ReferralEvent {
   referralType   ReferralType
   urgency        Urgency
   triggerReason  String   @db.VarChar(255)
+  triggerCode    String   @db.VarChar(10)   // T1..T4 — explicit trigger id for traceability
+  algorithmVersion String @db.VarChar(50)
   triggerPayload Json     @db.JsonB
   ctaPayload     Json     @db.JsonB
   ctaDeliveredAt DateTime? @db.Timestamptz
