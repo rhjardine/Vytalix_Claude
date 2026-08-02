@@ -210,7 +210,7 @@ model BiologicalAgeAssessment {
   partialAgesSnapshot Json  @db.JsonB
   inputSnapshot    Json     @db.JsonB
   algorithmId      String   @db.VarChar(50)
-  algorithmVersion String   @db.VarChar(20)
+  algorithmVersion String   @db.VarChar(50)
   conductedBy      String?  @db.Uuid
   notes            String?  @db.Text
   assessedAt       DateTime @default(now()) @db.Timestamptz
@@ -236,7 +236,7 @@ model PreventiveScore {
   lifestyleScore      Int?
   inputSnapshot    Json     @db.JsonB
   algorithmId      String   @db.VarChar(50)
-  algorithmVersion String   @db.VarChar(20)
+  algorithmVersion String   @db.VarChar(50)
   computedAt       DateTime @default(now()) @db.Timestamptz
 
   @@index([tenantId, patientId, computedAt(sort: Desc)])
