@@ -3,7 +3,11 @@
 Everything Disglobal needs to start building the Phase 1 consumer. Self-contained:
 no repository access required.
 
-Start with **`QUICK_START.md`** — first successful call in under 15 minutes.
+Start with **`FIRST_SUCCESSFUL_CALL_GUIDE.md`** — one page, first verified call.
+Then **`QUICK_START.md`** for the full assessment and webhook flows.
+
+All sandbox data is synthetic and carries no clinical meaning — see
+`KNOWN_SANDBOX_BEHAVIOR.md`.
 
 ---
 
@@ -11,7 +15,9 @@ Start with **`QUICK_START.md`** — first successful call in under 15 minutes.
 
 | Path | What it is |
 |---|---|
+| `FIRST_SUCCESSFUL_CALL_GUIDE.md` | **Start here.** Six steps to a verified first call |
 | `QUICK_START.md` | First call, assessment, signed webhook, scopes, error codes |
+| `KNOWN_SANDBOX_BEHAVIOR.md` | Responses that look like failures and are not — read before reporting a bug |
 | `FAQ.md` | The questions that come up in the first week |
 | `KNOWN_LIMITATIONS.md` | What is intentionally not in Phase 1, and what to do instead |
 | `DG_INTEGRATION_CHECKLIST.md` | Pre-kickoff verification for both sides |

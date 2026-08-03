@@ -60,27 +60,98 @@ curl -s -X POST "$VYTALIX_BASE_URL/api/v2/vitality/assess" \
     "biologicalSex": "MALE",
     "isAthlete": false,
     "measurements": {
-      "fatPercentage": 24.5,
-      "bmi": 26.1,
-      "digitalReflexes":     { "high": 12, "long": 11, "width": 13 },
-      "visualAccommodation": 14,
-      "staticBalance":       { "high": 9, "long": 8, "width": 10 },
-      "skinHydration": 62,
-      "systolicPressure": 128,
-      "diastolicPressure": 82
+      "fatPercentage": 24.0,
+      "bmi": 27.0,
+      "digitalReflexes":     { "high": 1.7, "long": 1.7, "width": 1.7 },
+      "visualAccommodation": 1.0,
+      "staticBalance":       { "high": 3.0, "long": 3.5, "width": 2.8 },
+      "skinHydration": 32,
+      "systolicPressure": 132,
+      "diastolicPressure": 85
     }
   }'
 ```
 
-Every measurement field is required. `digitalReflexes` and `staticBalance` are
-objects with three positive numbers (`high`, `long`, `width`) — three attempts,
-not a single value.
+> `SYNTHETIC_SANDBOX_DATA` — these numbers are fabricated for the sandbox subject.
+> They are not a real person's readings and must not be reused as clinical input.
+
+**Units matter more than they look.** `digitalReflexes` and `staticBalance` are
+each *reduced to the product* of their three dimensions before the engine looks
+them up:
+
+- `digitalReflexes` → `high × long × width` = **4.913** (expected order of magnitude: **1–5**)
+- `staticBalance` → `high × long × width` = **29.4** (expected order of magnitude: **10–40**)
+
+They are three dimensions of one measurement, **not three repeated attempts**.
+Sending values an order of magnitude too large is the single most common
+first-integration mistake: the request still returns `200`, but the biological age
+it reports will be nonsense.
+
+The response for exactly the payload above:
+
+```json
+{
+  "assessmentId": "6d90ff53-1222-4dac-9813-59db0b473c88",
+  "biologicalAge": 35.9,
+  "differentialAge": -9.1,
+  "ageStatus": "REJUVENECIDO",
+  "partialAges": {
+    "fatAge": 40, "bmiAge": 40, "reflexesAge": 45, "visualAge": 40,
+    "balanceAge": 21.2, "hydrationAge": 40, "systolicAge": 30, "diastolicAge": 25
+  },
+  "algorithmVersion": "daaa-biophysics-v2.1.0",
+  "assessedAt": "2026-08-03T01:04:17.748Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `assessmentId` | UUID of the stored assessment — keep it, `GET /vitality/{subjectRef}` returns the same one |
+| `biologicalAge` | The computed age in years |
+| `differentialAge` | `biologicalAge − chronologicalAge`; negative means younger than calendar age |
+| `ageStatus` | `REJUVENECIDO` · `NORMAL` · `ENVEJECIDO` |
+| `partialAges` | Per-marker contribution — useful for showing the user *why* |
+| `algorithmVersion` | Pin this in your logs; results are only comparable within one version |
+| `assessedAt` | ISO-8601 UTC timestamp |
 
 `422` returns the exact failing fields under `errors[]`. `404` means the
 `subjectRef` does not exist in this tenant yet — ask us to seed it.
 
 `X-Idempotency-Key` is optional but recommended: a repeat with the same key
 replays the stored response for 24h instead of recomputing.
+
+### Reading the result back
+
+```bash
+curl -s "$VYTALIX_BASE_URL/api/v2/vitality/DISG-8c1e5a" \
+  -H "X-API-Key: $VYTALIX_API_KEY"
+```
+
+Returns the latest assessment for that subject — the same `assessmentId` you just
+received. `404 No assessment found` means the subject exists but has no assessment
+yet; that is different from `404 Subject '…' not found`, which means the reference
+itself is unknown.
+
+### Preventive score — `202` is not an error
+
+```bash
+curl -s -X POST "$VYTALIX_BASE_URL/api/v2/preventive/score" \
+  -H "X-API-Key: $VYTALIX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"subjectRef": "DISG-8c1e5a"}'
+```
+
+The composite score needs at least two of four components (cardiovascular,
+metabolic, biological age, lifestyle). Two answers are both normal:
+
+| Situation | Response |
+|---|---|
+| Not enough clinical data on the subject | **`202`** `{"message":"Insufficient data for score","patientId":"…"}` |
+| Enough data | **`200`** with `scoreId`, `compositeScore`, `scoreTier`, `components`, and `insufficientData` listing what was missing |
+
+A `202` means *"accepted, nothing to compute yet"* — not a failure, and not
+something to retry. `insufficientData` on a `200` is equally normal: it tells you
+which components were skipped while the rest still produced a score.
 
 ---
 
