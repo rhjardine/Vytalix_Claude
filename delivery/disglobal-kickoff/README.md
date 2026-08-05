@@ -3,41 +3,62 @@
 Everything Disglobal needs to start building the Phase 1 consumer. Self-contained:
 no repository access required.
 
-Start with **`FIRST_SUCCESSFUL_CALL_GUIDE.md`** — one page, first verified call.
-Then **`QUICK_START.md`** for the full assessment and webhook flows.
+Start with **`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`** — it defines the scope
+and the flow. Everything else expands one part of it.
 
 All sandbox data is synthetic and carries no clinical meaning — see
 `KNOWN_SANDBOX_BEHAVIOR.md`.
 
 ---
 
-## Contents
+## Reading order
+
+| # | Document | Answers |
+|---|---|---|
+| **1** | **`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`** | **Read first.** Scope, flow, which APIs, who owns what |
+| 2 | `FIRST_SUCCESSFUL_CALL_GUIDE.md` | How do I make my first call work? |
+| 3 | `QUICK_START.md` | What exactly do I send and receive? |
+| 4 | `API_QUICK_REFERENCE.md` | Every endpoint at a glance, Group A and Group B |
+| 5 | `KNOWN_SANDBOX_BEHAVIOR.md` | Which responses are *not* errors? |
+| 6 | `INTEGRATION_FLOW_FASE1.md` | The full sequence, hop by hop |
+| 7 | `PAYMENT_AND_NOTIFICATION_FLOW.md` | Who does what around payment |
+| 8 | `PARTNER_SECURITY_HANDOFF.md` | How credentials reach me |
+| 9 | `HUMAN_VALIDATION_RUNBOOK.md` | *(Vytalix-internal)* environment check before a demo |
+
+## Reference
 
 | Path | What it is |
 |---|---|
-| `PARTNER_INTEGRATION_OVERVIEW.md` | **Read first.** What Vytalix is, what you consume, the combined flow |
-| `FIRST_SUCCESSFUL_CALL_GUIDE.md` | Six steps to a verified first call |
-| `API_QUICK_REFERENCE.md` | All seven endpoints in one table: request, response, common errors |
-| `INTEGRATION_FLOW_FASE1.md` | The eight-step sequence, with the real HTTP code at each hop |
-| `PAYMENT_AND_NOTIFICATION_FLOW.md` | Payment responsibilities — what is settled and what is still open |
-| `QUICK_START.md` | Full request/response detail, signed webhook, error codes |
-| `KNOWN_SANDBOX_BEHAVIOR.md` | Responses that look like failures and are not — read before reporting a bug |
-| `KNOWN_LIMITATIONS.md` | What is intentionally not in Phase 1, and what to do instead |
+| `PHASE_MATRIX.md` | Available now · planned · roadmap · out of scope |
+| `FACIAL_ANALYSIS_STATUS.md` | Exact state of the facial component |
+| `KNOWN_LIMITATIONS.md` | What is deliberately absent, and what to do instead |
 | `FAQ.md` | The questions that come up in the first week |
-| `PARTNER_SECURITY_HANDOFF.md` | How credentials are delivered, rotated and revoked |
-| `HUMAN_VALIDATION_RUNBOOK.md` | *(Vytalix-internal)* environment check before a demo |
 | `SESSION_RUNBOOK.md` | *(Vytalix-internal)* conducting the first live session |
 | `DG_INTEGRATION_CHECKLIST.md` | Pre-kickoff verification for both sides |
 | `openapi/vytalix-platform-v2.yaml` | Full API contract — import into your codegen |
-| `postman/vytalix_postman_collection.json` | Every Phase 1 call, ready to run |
-| `examples/send-payment-webhook.sh` | Webhook HMAC signing — curl + openssl |
-| `examples/send-payment-webhook.js` | Webhook HMAC signing — Node.js |
+| `postman/vytalix_postman_collection.json` | Runnable collection |
+| `examples/send-payment-webhook.sh` · `.js` | Webhook HMAC signing references |
 
 ---
 
-## Endpoints in scope for Phase 1
+## Endpoints in scope for Phase 1 — Group A
 
-| Endpoint | Method | Scope required |
+The flow: scan → questionnaire → booking → payment → activation.
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/funnel/leads` | POST | none |
+| `/api/funnel/facial-analysis` | POST | none |
+| `/api/funnel/vitality-assessment` | POST | none |
+| `/api/funnel/booking` | POST | none |
+| `/api/v2/webhooks/payment` | POST | HMAC-SHA256 |
+
+## Group B — operational, outside the Phase 1 flow
+
+Available with an API Key if scope expands. These **compute** clinical results
+rather than receiving them.
+
+| Endpoint | Method | Scope |
 |---|---|---|
 | `/api/v2/vitality/assess` | POST | `vitality:write` |
 | `/api/v2/vitality/{subjectRef}` | GET | `vitality:read` |
@@ -45,10 +66,9 @@ All sandbox data is synthetic and carries no clinical meaning — see
 | `/api/v2/referral/{subjectRef}` | GET | `referral:read` |
 | `/api/v2/engagement/events` | POST | `engagement:write` |
 | `/api/v2/insights/cohort` | GET | `insights:read` |
-| `/api/v2/webhooks/payment` | POST | *(none — HMAC signed)* |
 
-Not available to partner keys in Phase 1: `/api/funnel/*`, `/api/v2/dental/*`,
-`/api/exchange-rate`, `/admin/*`, and the asynchronous referral webhook.
+Out of scope entirely: `/api/v2/dental/*`, `/api/exchange-rate`, `/admin/*`, and
+the asynchronous referral webhook. Full breakdown in `PHASE_MATRIX.md`.
 
 ---
 

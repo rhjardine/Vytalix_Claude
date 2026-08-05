@@ -93,6 +93,18 @@ body. That is what lets us find your exact request on our side.
 
 ### Is the funnel API (`/api/funnel/*`) available to me?
 
-No. It is outside Phase 1 and inactive for partners. The same applies to the
-dental endpoints and the outbound (asynchronous) referral webhook — use the
-synchronous `GET /api/v2/referral/{subjectRef}` instead.
+Yes — and it is where the Phase 1 flow lives. The four funnel endpoints (leads,
+facial analysis, vitality assessment, booking) are mounted and operational, and
+they currently require **no authentication**. See
+`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md` §4, Group A.
+
+Dental endpoints and the outbound asynchronous referral webhook remain out of
+scope — for referral use the synchronous `GET /api/v2/referral/{subjectRef}`.
+
+### Which group of APIs do I integrate — the funnel or `/api/v2`?
+
+The funnel, for the agreed Phase 1 flow. Group A (funnel + payment webhook) covers
+scan → questionnaire → booking → payment → activation. Group B (`/api/v2/*`
+clinical endpoints) is operational and API-Key authenticated, but it computes
+results rather than receiving them — a different integration model, available if
+scope expands. `PHASE_MATRIX.md` lays out both.

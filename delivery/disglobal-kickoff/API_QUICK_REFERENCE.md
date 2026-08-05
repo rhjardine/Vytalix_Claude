@@ -1,13 +1,37 @@
-# API Quick Reference — Phase 1
+# API Quick Reference
 
-Seven endpoints. Base URL: `https://sandbox.api.vytalix.health`.
-Six take `X-API-Key`; the payment webhook takes an HMAC signature instead.
+Base URL: `https://sandbox.api.vytalix.health`. Every response carries
+`X-Correlation-ID` — log it.
 
-Every response carries `X-Correlation-ID` — log it.
+Two groups, two authentication models. **Do not mix them.** Which one you need is
+decided in `DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md` §4.
 
 ---
 
-## The seven endpoints
+## Group A — Partner Integration APIs (the Phase 1 flow)
+
+Currently **unauthenticated**, except the payment webhook (HMAC).
+
+| Endpoint | Method | Purpose | Request | Response | Common errors |
+|---|---|---|---|---|---|
+| `/api/funnel/leads` | POST | Capture or identify a lead | contact fields | `201` — `{ data: { leadId, status, step, token } }` | `422` validation |
+| `/api/funnel/facial-analysis` | POST | Facial scan | `imageBase64` (100 chars – ~2 MB), optional `sessionId`, `leadId` | `201` — `estimatedAge`, `confidence`, `analysisPoints`, **`provider`** | `422` image too small/large. **Check `provider`: `mock` means not for display** |
+| `/api/funnel/vitality-assessment` | POST | Store the questionnaire result | **pre-computed** `score`, `category`, `yearsBiological`, `chronologicalAgeGroup`, 5 `dimensions`, `answersPayload`, `completedAt` | `201` — `{ data: { id } }` — **no interpretation returned** | `422` a required computed field is missing |
+| `/api/funnel/booking` | POST | Request a consultation | `bookingType`: `ONLINE_CONSULT` \| `IN_PERSON` \| `LAB_PANEL`, contact/slot fields | `201` — booking reference | `422` invalid `bookingType` |
+| `/api/v2/webhooks/payment` | POST | Confirm payment → activate | canonical body + `signature` (HMAC-SHA256) | `200` — `{ received: true, replayed: false\|true }` | `401` signature · `500` **not recorded, retry the same request** |
+
+**`answersPayload`** is a free-form map of boolean answers — a 45-question
+questionnaire fits with no schema change. **Disglobal computes the score**; Vytalix
+persists it without recalculating.
+
+---
+
+## Group B — Platform APIs (operational, outside the Phase 1 flow)
+
+All require `X-API-Key` with the matching scope. Use these when you want Vytalix to
+*compute* a clinical result rather than receive one.
+
+| Endpoint | Method | Purpose | Request | Response | Common errors |
 
 | Endpoint | Method | Purpose | Request | Response | Common errors |
 |---|---|---|---|---|---|
@@ -102,8 +126,8 @@ active in this environment — do not rely on receiving `429` as a volume signal
 
 ## Not available in Phase 1
 
-`/api/funnel/*` · `/api/v2/dental/*` · `/api/v2/catalog` · `/api/exchange-rate` ·
-`/admin/*` · facial analysis · outbound referral webhook.
+`/api/v2/dental/*` · `/api/v2/catalog` · `/api/exchange-rate` · `/admin/*` ·
+outbound referral webhook.
 
 They may appear in the OpenAPI file — the spec documents the whole platform. Your
 key does not open them.

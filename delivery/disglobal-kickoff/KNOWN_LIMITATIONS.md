@@ -58,7 +58,18 @@ Provisioning and rotation happen through an authenticated internal endpoint.
 
 ### 8. Out of Phase 1 scope
 
-Public funnel (`/api/funnel/*`), dental endpoints (`/api/v2/dental/*`), exchange
-rate, and the administrative surface (`/admin/*`) are not available to partner
-keys. Dental remains a pending commercial decision rather than a technical
-limitation.
+Dental endpoints (`/api/v2/dental/*`), exchange rate, and the administrative
+surface (`/admin/*`). Dental is a pending commercial decision rather than a
+technical limitation.
+
+**Not** in this list: the funnel endpoints (`/api/funnel/*`). They are mounted,
+operational, and carry the Phase 1 flow — see `PHASE_MATRIX.md`.
+
+### 9. The funnel endpoints are currently unauthenticated
+
+`/api/funnel/*` requires no credential today. That is the present state, not a
+commitment: authentication is intended before production, with the mechanism and
+timing still open.
+
+**Instead:** keep the base URL and any future auth header in configuration rather
+than hard-coded, so adding a credential later is a config change on your side.
