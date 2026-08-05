@@ -76,9 +76,15 @@ as a SHA-256 hash, so a lost key cannot be recovered, only replaced.
 
 ### Are there rate limits?
 
-Your key carries a rate limit tier and an optional monthly quota. When either is
-exceeded you receive `429`. Tell us your expected volume and we set the tier
-accordingly before kickoff.
+Your key **records** a rate limit tier, and the tenant records an optional monthly
+quota — but neither is enforced in this environment. The only `429` you can
+currently receive comes from the authentication brute-force guard: 20 failed auth
+attempts per minute from one IP.
+
+So do not rely on `429` as a volume signal — you will not get one. Tell us your
+expected volume anyway: we set the tier now so it is correct when enforcement lands
+in pre-production, and in the meantime please avoid load testing against sandbox,
+which has no throttle to protect it.
 
 ### What do I log for support?
 

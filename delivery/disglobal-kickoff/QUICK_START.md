@@ -212,7 +212,7 @@ Your key carries only what Phase 1 needs. A call outside these returns `403`.
 | `401` | Key missing, invalid, expired or revoked | Stop and contact us — do not retry in a loop |
 | `403` | Key is valid but lacks the scope | Stop; ask us to widen the scope |
 | `422` | Validation failed — see `errors[]` | Fix the payload |
-| `429` | Rate limit or monthly quota | Back off and retry |
+| `429` | Too many failed authentications (20/min per IP). **Not** a rate-limit or quota signal — neither is enforced today | Back off 60 seconds; check the key |
 | `4xx/5xx` | RFC 7807 body: `type,title,status,detail,correlationId` | Log `correlationId` and send it to us |
 
 Every response echoes `X-Correlation-ID`. Log it — it is how we trace an incident

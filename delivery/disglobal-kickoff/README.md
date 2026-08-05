@@ -15,11 +15,18 @@ All sandbox data is synthetic and carries no clinical meaning — see
 
 | Path | What it is |
 |---|---|
-| `FIRST_SUCCESSFUL_CALL_GUIDE.md` | **Start here.** Six steps to a verified first call |
-| `QUICK_START.md` | First call, assessment, signed webhook, scopes, error codes |
+| `PARTNER_INTEGRATION_OVERVIEW.md` | **Read first.** What Vytalix is, what you consume, the combined flow |
+| `FIRST_SUCCESSFUL_CALL_GUIDE.md` | Six steps to a verified first call |
+| `API_QUICK_REFERENCE.md` | All seven endpoints in one table: request, response, common errors |
+| `INTEGRATION_FLOW_FASE1.md` | The eight-step sequence, with the real HTTP code at each hop |
+| `PAYMENT_AND_NOTIFICATION_FLOW.md` | Payment responsibilities — what is settled and what is still open |
+| `QUICK_START.md` | Full request/response detail, signed webhook, error codes |
 | `KNOWN_SANDBOX_BEHAVIOR.md` | Responses that look like failures and are not — read before reporting a bug |
-| `FAQ.md` | The questions that come up in the first week |
 | `KNOWN_LIMITATIONS.md` | What is intentionally not in Phase 1, and what to do instead |
+| `FAQ.md` | The questions that come up in the first week |
+| `PARTNER_SECURITY_HANDOFF.md` | How credentials are delivered, rotated and revoked |
+| `HUMAN_VALIDATION_RUNBOOK.md` | *(Vytalix-internal)* environment check before a demo |
+| `SESSION_RUNBOOK.md` | *(Vytalix-internal)* conducting the first live session |
 | `DG_INTEGRATION_CHECKLIST.md` | Pre-kickoff verification for both sides |
 | `openapi/vytalix-platform-v2.yaml` | Full API contract — import into your codegen |
 | `postman/vytalix_postman_collection.json` | Every Phase 1 call, ready to run |
