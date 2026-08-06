@@ -17,7 +17,7 @@ Ownership labels: **[D]** Disglobal · **[V]** Vytalix · **[B]** business decis
 | D2 | **The 45-question questionnaire itself** | Presentation, navigation, persistence of answers |
 | D3 | **Questionnaire scoring logic** | `score` 0–100, `category`, `yearsBiological`, five `dimensions`. **Vytalix does not compute any of these** |
 | D4 | Rendering the initial result | The API returns only an `id`, no interpretation |
-| D5 | Service selection UI (online / in person) | Maps to one `bookingType` field |
+| D5 | Service selection UI (online / in person) | **No API field expresses this today** — `consultationType` selects the subject, not the modality. Needs a decision |
 | D6 | Checkout and payment | Your PSP; Vytalix is not in this path |
 | D7 | HMAC signing of the payment webhook | Canonical body; reference implementation shipped |
 | D8 | Retry policy on `500` and timeout | Guarantee provided; policy is yours |

@@ -47,7 +47,10 @@ curl -s -X POST $VYX/api/funnel/facial-analysis \
 ```
 
 ```json
-{ "estimatedAge": 47, "confidence": 0.83, "analysisPoints": 24, "provider": "mock" }
+{ "data": { "id": "04a66eb7-8318-4611-b66d-e4dbbf7dd007", "estimatedAge": 51,
+            "confidence": 0.88, "analysisPoints": 24, "status": "COMPLETED",
+            "provider": "mock", "analyzedAt": "2026-08-06T13:57:33.703Z" },
+  "meta": { "correlationId": "ea3497cf-…", "timestamp": "2026-08-06T13:57:33.703Z" } }
 ```
 
 > **Read `provider` before you display anything.** `"mock"` means the number is
@@ -97,20 +100,25 @@ curl -s -X POST $VYX/api/funnel/vitality-assessment \
 3. `chronologicalAgeGroup` is an enum: `"45"`, `"59"`, `"69"`, `"78"` — an age
    bracket, not a count.
 
-**`422`** lists every missing or invalid field in `errors[]`.
+**`422`** returns a single `detail` message — the first validation failure, not a
+list. Fix one field, resend, see the next.
 
 ---
 
-## 4 · Booking — online or in person (5 min)
+## 4 · Booking — consultation request (5 min)
 
 ```bash
 curl -s -X POST $VYX/api/funnel/booking \
   -H 'Content-Type: application/json' \
-  -d '{"bookingType":"ONLINE_CONSULT","leadId":"<optional>","sessionId":"demo-001"}'
+  -d '{"name":"Kevin Perdomo","email":"kevin@disglobal.test","consultationType":"EXPLORATORIA_LONGEVIDAD"}'
 ```
 
-`bookingType` accepts `ONLINE_CONSULT`, `IN_PERSON` or `LAB_PANEL`. That single
-field is how the online/in-person split is expressed.
+Returns `201` with `status: WHATSAPP_ONLY`, a `confirmationCode` and a
+`whatsappFallbackUrl`. This endpoint records the request and hands off to WhatsApp
+— it does not reserve a slot. Show the code and the link, or the journey stops.
+
+Note: no field currently distinguishes online from in-person. See
+`FUNNEL_API_REFERENCE.md` §4.
 
 ---
 
@@ -152,7 +160,7 @@ is safe to resend.
 - [ ] `/liveness` returns `200`
 - [ ] Facial scan returns a payload and you read `provider` from it
 - [ ] Questionnaire returns an `id` — and your scoring produced the values you sent
-- [ ] Booking accepts both `ONLINE_CONSULT` and `IN_PERSON`
+- [ ] Booking returns `WHATSAPP_ONLY` with a `confirmationCode`
 - [ ] Webhook returns `replayed:false`, then `replayed:true` on the repeat
 - [ ] A tampered signature returns `401`
 

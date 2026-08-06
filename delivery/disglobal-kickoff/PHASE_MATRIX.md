@@ -19,9 +19,7 @@ Labels: **[V]** verified · **[I]** inference · **[C]** commercial decision ope
 | Lead capture | `POST /api/funnel/leads` | **[V]** live, no auth |
 | Facial scan (plumbing) | `POST /api/funnel/facial-analysis` | **[V]** live · **mock provider** — see `FACIAL_ANALYSIS_STATUS.md` |
 | Preventive questionnaire | `POST /api/funnel/vitality-assessment` | **[V]** live · accepts a **pre-computed** score · 45 questions fit in `answersPayload` with no schema change |
-| Consultation booking — online | `POST /api/funnel/booking` | **[V]** `bookingType: ONLINE_CONSULT` |
-| Consultation booking — in person | `POST /api/funnel/booking` | **[V]** `bookingType: IN_PERSON` |
-| Lab panel booking | `POST /api/funnel/booking` | **[V]** `bookingType: LAB_PANEL` |
+| Consultation request | `POST /api/funnel/booking` | **[V]** live · `consultationType` selects the subject · returns `WHATSAPP_ONLY` with a confirmation code — a hand-off, not a scheduled appointment |
 | Payment confirmation | `POST /api/v2/webhooks/payment` | **[V]** HMAC · idempotent on `intentId` · `200` only after COMMIT |
 | Service activation | *(automatic)* | **[V]** post-commit, idempotent |
 | Patient notification | *(automatic)* | **[V]** fired post-commit · **sandbox uses the `log` provider — no real email/SMS is delivered** |
@@ -79,6 +77,8 @@ persists, but `mock` returns a hash-derived number. Enabling AWS is configuratio
 not development **[V]**. Whether it gets enabled is open **[C]**.
 
 **3. Does the flow support both online and in-person consultation?**
-**Yes** — `bookingType` already distinguishes `ONLINE_CONSULT`, `IN_PERSON` and
-`LAB_PANEL` **[V]**. What happens *after* the booking — calendars, assignment,
-reminders — is not covered by any Phase 1 endpoint.
+**No, not today.** `consultationType` describes the subject of the consultation
+(longevity, dental, preventive, second opinion), not its modality **[V]**. No field
+in the booking schema distinguishes online from in person. A `bookingType` enum
+with those values exists in another module, but the endpoint does not use it.
+Raising this is the first thing to settle if the split matters for Phase 1.

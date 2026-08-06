@@ -14,10 +14,10 @@ Currently **unauthenticated**, except the payment webhook (HMAC).
 
 | Endpoint | Method | Purpose | Request | Response | Common errors |
 |---|---|---|---|---|---|
-| `/api/funnel/leads` | POST | Capture or identify a lead | contact fields | `201` — `{ data: { leadId, status, step, token } }` | `422` validation |
-| `/api/funnel/facial-analysis` | POST | Facial scan | `imageBase64` (100 chars – ~2 MB), optional `sessionId`, `leadId` | `201` — `estimatedAge`, `confidence`, `analysisPoints`, **`provider`** | `422` image too small/large. **Check `provider`: `mock` means not for display** |
+| `/api/funnel/leads` | POST | Capture or identify a lead | `name`, `email`, `interestType`, `source`, both consent flags | `201` — `{ data: { id, status: "NEW", confirmationEmailSent } }` | `422` `Email inválido` · invalid enum |
+| `/api/funnel/facial-analysis` | POST | Facial scan | `imageBase64` (100 chars – ~2 MB), optional `sessionId`, `leadId` | **`200`** — `id`, `estimatedAge`, `confidence`, `analysisPoints`, `status`, **`provider`**, `analyzedAt` | `422` image too small/large. **Check `provider`: `mock` means not for display** |
 | `/api/funnel/vitality-assessment` | POST | Store the questionnaire result | **pre-computed** `score`, `category`, `yearsBiological`, `chronologicalAgeGroup`, 5 `dimensions`, `answersPayload`, `completedAt` | `201` — `{ data: { id } }` — **no interpretation returned** | `422` a required computed field is missing |
-| `/api/funnel/booking` | POST | Request a consultation | `bookingType`: `ONLINE_CONSULT` \| `IN_PERSON` \| `LAB_PANEL`, contact/slot fields | `201` — booking reference | `422` invalid `bookingType` |
+| `/api/funnel/booking` | POST | Request a consultation | `name`, `email`, `consultationType` | `201` — `status: WHATSAPP_ONLY`, `confirmationCode`, `whatsappFallbackUrl` | `422` invalid or missing `consultationType`. **Does not schedule; hands off to WhatsApp** |
 | `/api/v2/webhooks/payment` | POST | Confirm payment → activate | canonical body + `signature` (HMAC-SHA256) | `200` — `{ received: true, replayed: false\|true }` | `401` signature · `500` **not recorded, retry the same request** |
 
 **`answersPayload`** is a free-form map of boolean answers — a 45-question
@@ -30,8 +30,6 @@ persists it without recalculating.
 
 All require `X-API-Key` with the matching scope. Use these when you want Vytalix to
 *compute* a clinical result rather than receive one.
-
-| Endpoint | Method | Purpose | Request | Response | Common errors |
 
 | Endpoint | Method | Purpose | Request | Response | Common errors |
 |---|---|---|---|---|---|
@@ -105,7 +103,7 @@ All errors use RFC 7807: `type`, `title`, `status`, `detail`, `correlationId`.
 | `401` | Key missing, invalid, expired or revoked — deliberately indistinguishable | Stop, check the header. **Do not loop** — 20 failures/minute per IP trips a guard and returns `429` |
 | `403` | Key valid, scope not granted | Stop; body names the scope |
 | `404` | Read the body — two distinct meanings | See the table above |
-| `422` | Validation failed; `errors[]` names each field | Fix the payload and retry |
+| `422` | Validation failed. On `/api/v2` the body carries `errors[]`; on `/api/funnel` a single `detail` message | Fix the payload and retry |
 | `429` | Too many authentication failures | Back off 60 seconds |
 | `500` | On the webhook: nothing recorded → **retry**. Elsewhere: ours → send us the `correlationId` | Do not debug live |
 

@@ -13,8 +13,8 @@ repository access, no SDK, no VPN.
 ## What this platform does
 
 Vytalix is a clinical intelligence engine behind a preventive-health journey:
-facial scan → preventive questionnaire → initial result → consultation booking
-(online or in person) → payment → service activation.
+facial scan → preventive questionnaire → initial result → consultation request →
+payment → service activation.
 
 **Disglobal owns** the user, the interface, questionnaire scoring and payment.
 **Vytalix owns** persistence, activation, notifications and the clinical engine.
@@ -27,13 +27,14 @@ facial scan → preventive questionnaire → initial result → consultation boo
 |---|---|---|
 | 1 | [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md) | How do I get something working today? |
 | 2 | [`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`](DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md) | What am I integrating, and who owns what? |
-| 3 | [`API_QUICK_REFERENCE.md`](API_QUICK_REFERENCE.md) | What do I send and what comes back? |
-| 4 | [`INTEGRATION_FLOW_FASE1.md`](INTEGRATION_FLOW_FASE1.md) | In what order do the calls happen? |
-| 5 | [`PAYMENT_AND_NOTIFICATION_FLOW.md`](PAYMENT_AND_NOTIFICATION_FLOW.md) | How does payment and activation work? |
-| 6 | [`KNOWN_SANDBOX_BEHAVIOR.md`](KNOWN_SANDBOX_BEHAVIOR.md) | Which responses are *not* errors? |
-| 7 | [`COMMON_INTEGRATION_MISTAKES.md`](COMMON_INTEGRATION_MISTAKES.md) | What will I get wrong? |
-| 8 | [`IMPLEMENTATION_ESTIMATION_GUIDE.md`](IMPLEMENTATION_ESTIMATION_GUIDE.md) | How much work is this, and who does it? |
-| 9 | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) | What is missing before real users? |
+| 3 | [`FUNNEL_API_REFERENCE.md`](FUNNEL_API_REFERENCE.md) | The four Phase 1 endpoints, field by field, with captured responses |
+| 4 | [`API_QUICK_REFERENCE.md`](API_QUICK_REFERENCE.md) | Everything at a glance, both groups |
+| 5 | [`INTEGRATION_FLOW_FASE1.md`](INTEGRATION_FLOW_FASE1.md) | In what order do the calls happen? |
+| 6 | [`PAYMENT_AND_NOTIFICATION_FLOW.md`](PAYMENT_AND_NOTIFICATION_FLOW.md) | How does payment and activation work? |
+| 7 | [`KNOWN_SANDBOX_BEHAVIOR.md`](KNOWN_SANDBOX_BEHAVIOR.md) | Which responses are *not* errors? |
+| 8 | [`COMMON_INTEGRATION_MISTAKES.md`](COMMON_INTEGRATION_MISTAKES.md) | What will I get wrong? |
+| 9 | [`IMPLEMENTATION_ESTIMATION_GUIDE.md`](IMPLEMENTATION_ESTIMATION_GUIDE.md) | How much work is this, and who does it? |
+| 10 | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) | What is missing before real users? |
 
 ## Reference
 

@@ -45,7 +45,8 @@ engine behind them.
       ┌───┴────┐
       ▼        ▼
    ONLINE   PRESENCIAL ───────▶ POST /api/funnel/booking
-   consulta  clínica/médico     bookingType: ONLINE_CONSULT | IN_PERSON | LAB_PANEL
+   consulta  clínica/médico     consultationType selects the subject, not the
+                                modality — see FUNNEL_API_REFERENCE.md §4
       └───┬────┘
           ▼
    5. PAGO (Disglobal)           Disglobal's own PSP — Vytalix is not in this path
