@@ -200,7 +200,7 @@ event, intentId, amount, currency, timestamp, subjectRef, metadata
 | # | Document | Answers |
 |---|---|---|
 | 1 | **this file** | What am I integrating, and in what order? |
-| 2 | `FIRST_SUCCESSFUL_CALL_GUIDE.md` | How do I make my first call work? |
+| 2 | `FIRST_DAY_WITH_VYTALIX.md` | How do I make my first call work? |
 | 3 | `QUICK_START.md` | What exactly do I send and receive? |
 | 4 | `API_QUICK_REFERENCE.md` | Every endpoint at a glance |
 | 5 | `KNOWN_SANDBOX_BEHAVIOR.md` | Which responses are *not* errors? |

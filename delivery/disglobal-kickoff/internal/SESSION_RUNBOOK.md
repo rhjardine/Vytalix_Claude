@@ -48,7 +48,7 @@ early if they are wrong.
 | 13 | OpenAPI contract | `openapi/vytalix-platform-v2.yaml` (byte-identical copy in the package) |
 | 14 | Postman collection | `postman/vytalix_postman_collection.json` — 15 requests, covers all seven endpoints |
 | 15 | Webhook signing examples | `examples/send-payment-webhook.sh` and `.js` — both verified to produce the same digest |
-| 16 | Guides | `FIRST_SUCCESSFUL_CALL_GUIDE.md`, `QUICK_START.md`, `KNOWN_SANDBOX_BEHAVIOR.md` |
+| 16 | Guides | `FIRST_DAY_WITH_VYTALIX.md`, `QUICK_START.md`, `KNOWN_SANDBOX_BEHAVIOR.md` |
 
 ### 1.4 Your own dry run — do this before the call
 
@@ -234,7 +234,7 @@ State three things explicitly:
 
 > "Everything you saw came from commit `4dead40`. The package you have —
 > OpenAPI, Postman, the two signing examples, and the three guides — matches
-> exactly what we just ran. Start with `FIRST_SUCCESSFUL_CALL_GUIDE.md`; if a
+> exactly what we just ran. Start with `FIRST_DAY_WITH_VYTALIX.md`; if a
 > response looks wrong, check `KNOWN_SANDBOX_BEHAVIOR.md` before filing it, and
 > send us the `X-Correlation-ID` with anything you do file."
 

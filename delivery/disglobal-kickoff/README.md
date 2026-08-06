@@ -1,74 +1,88 @@
-# Vytalix × Disglobal — Integration Kickoff Package
+# Vytalix — Partner Integration Kit
 
-Everything Disglobal needs to start building the Phase 1 consumer. Self-contained:
-no repository access required.
+**For Disglobal · Phase 1**
 
-Start with **`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`** — it defines the scope
-and the flow. Everything else expands one part of it.
+Everything needed to evaluate, plan and build the integration. Self-contained: no
+repository access, no SDK, no VPN.
 
-All sandbox data is synthetic and carries no clinical meaning — see
-`KNOWN_SANDBOX_BEHAVIOR.md`.
+> **New here? → [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md)**
+> Four calls, under an hour, working integration.
 
 ---
 
-## Reading order
+## What this platform does
 
-| # | Document | Answers |
+Vytalix is a clinical intelligence engine behind a preventive-health journey:
+facial scan → preventive questionnaire → initial result → consultation booking
+(online or in person) → payment → service activation.
+
+**Disglobal owns** the user, the interface, questionnaire scoring and payment.
+**Vytalix owns** persistence, activation, notifications and the clinical engine.
+
+---
+
+## Read in this order
+
+| # | Document | The one question it answers |
 |---|---|---|
-| **1** | **`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`** | **Read first.** Scope, flow, which APIs, who owns what |
-| 2 | `FIRST_SUCCESSFUL_CALL_GUIDE.md` | How do I make my first call work? |
-| 3 | `QUICK_START.md` | What exactly do I send and receive? |
-| 4 | `API_QUICK_REFERENCE.md` | Every endpoint at a glance, Group A and Group B |
-| 5 | `KNOWN_SANDBOX_BEHAVIOR.md` | Which responses are *not* errors? |
-| 6 | `INTEGRATION_FLOW_FASE1.md` | The full sequence, hop by hop |
-| 7 | `PAYMENT_AND_NOTIFICATION_FLOW.md` | Who does what around payment |
-| 8 | `PARTNER_SECURITY_HANDOFF.md` | How credentials reach me |
-| 9 | `HUMAN_VALIDATION_RUNBOOK.md` | *(Vytalix-internal)* environment check before a demo |
+| 1 | [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md) | How do I get something working today? |
+| 2 | [`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`](DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md) | What am I integrating, and who owns what? |
+| 3 | [`API_QUICK_REFERENCE.md`](API_QUICK_REFERENCE.md) | What do I send and what comes back? |
+| 4 | [`INTEGRATION_FLOW_FASE1.md`](INTEGRATION_FLOW_FASE1.md) | In what order do the calls happen? |
+| 5 | [`PAYMENT_AND_NOTIFICATION_FLOW.md`](PAYMENT_AND_NOTIFICATION_FLOW.md) | How does payment and activation work? |
+| 6 | [`KNOWN_SANDBOX_BEHAVIOR.md`](KNOWN_SANDBOX_BEHAVIOR.md) | Which responses are *not* errors? |
+| 7 | [`COMMON_INTEGRATION_MISTAKES.md`](COMMON_INTEGRATION_MISTAKES.md) | What will I get wrong? |
+| 8 | [`IMPLEMENTATION_ESTIMATION_GUIDE.md`](IMPLEMENTATION_ESTIMATION_GUIDE.md) | How much work is this, and who does it? |
+| 9 | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) | What is missing before real users? |
 
 ## Reference
 
+| Document | Use it for |
+|---|---|
+| [`QUICK_START.md`](QUICK_START.md) | Full field-by-field detail on the clinical endpoints |
+| [`PHASE_MATRIX.md`](PHASE_MATRIX.md) | Available now · planned · roadmap · out of scope |
+| [`FACIAL_ANALYSIS_STATUS.md`](FACIAL_ANALYSIS_STATUS.md) | Exact state of the facial component |
+| [`INTEGRATION_FAQ.md`](INTEGRATION_FAQ.md) | Specific questions during the build |
+| [`INTEGRATION_CHECKLIST.md`](INTEGRATION_CHECKLIST.md) | Shared verification list for both companies |
+| [`PARTNER_SECURITY_HANDOFF.md`](PARTNER_SECURITY_HANDOFF.md) | How credentials are delivered and rotated |
+
+## Machine-readable
+
 | Path | What it is |
 |---|---|
-| `PHASE_MATRIX.md` | Available now · planned · roadmap · out of scope |
-| `FACIAL_ANALYSIS_STATUS.md` | Exact state of the facial component |
-| `KNOWN_LIMITATIONS.md` | What is deliberately absent, and what to do instead |
-| `FAQ.md` | The questions that come up in the first week |
-| `SESSION_RUNBOOK.md` | *(Vytalix-internal)* conducting the first live session |
-| `DG_INTEGRATION_CHECKLIST.md` | Pre-kickoff verification for both sides |
-| `openapi/vytalix-platform-v2.yaml` | Full API contract — import into your codegen |
+| `openapi/vytalix-platform-v2.yaml` | API contract — import into your codegen or Postman |
 | `postman/vytalix_postman_collection.json` | Runnable collection |
-| `examples/send-payment-webhook.sh` · `.js` | Webhook HMAC signing references |
+| `examples/send-payment-webhook.sh` · `.js` | HMAC signing references — run before writing your own |
+
+*`internal/` contains Vytalix operational runbooks and is not part of the partner
+deliverable.*
 
 ---
 
-## Endpoints in scope for Phase 1 — Group A
+## API classification
 
-The flow: scan → questionnaire → booking → payment → activation.
-
-| Endpoint | Method | Auth |
+| Class | Endpoints | Status |
 |---|---|---|
-| `/api/funnel/leads` | POST | none |
-| `/api/funnel/facial-analysis` | POST | none |
-| `/api/funnel/vitality-assessment` | POST | none |
-| `/api/funnel/booking` | POST | none |
-| `/api/v2/webhooks/payment` | POST | HMAC-SHA256 |
+| **Core** — the Phase 1 flow | `POST /api/funnel/leads` · `/facial-analysis` · `/vitality-assessment` · `/booking` · `POST /api/v2/webhooks/payment` | **Integrate these** |
+| **Support** — operational | `GET /liveness` · `/readiness` · `/openapi.yaml` | Health and contract |
+| **Future** — built, outside Phase 1 | `POST /api/v2/vitality/assess` · `GET /api/v2/vitality/{subjectRef}` · `POST /api/v2/preventive/score` · `GET /api/v2/referral/{subjectRef}` · `POST /api/v2/engagement/events` · `GET /api/v2/insights/cohort` | Available if scope expands. Vytalix **computes** the result rather than receiving it |
+| **Administrative** — internal only | `/admin/*` | Never exposed to partners |
+| **Experimental / not in scope** | `/api/v2/dental/*` · `/api/v2/catalog` · `/api/exchange-rate` | Commercial decision pending |
 
-## Group B — operational, outside the Phase 1 flow
+Full breakdown, with MVP / Phase 1 / Phase 2 / Roadmap, in
+[`PHASE_MATRIX.md`](PHASE_MATRIX.md).
 
-Available with an API Key if scope expands. These **compute** clinical results
-rather than receiving them.
+---
 
-| Endpoint | Method | Scope |
-|---|---|---|
-| `/api/v2/vitality/assess` | POST | `vitality:write` |
-| `/api/v2/vitality/{subjectRef}` | GET | `vitality:read` |
-| `/api/v2/preventive/score` | POST | `preventive:write` |
-| `/api/v2/referral/{subjectRef}` | GET | `referral:read` |
-| `/api/v2/engagement/events` | POST | `engagement:write` |
-| `/api/v2/insights/cohort` | GET | `insights:read` |
+## Authentication at a glance
 
-Out of scope entirely: `/api/v2/dental/*`, `/api/exchange-rate`, `/admin/*`, and
-the asynchronous referral webhook. Full breakdown in `PHASE_MATRIX.md`.
+| Surface | Mechanism |
+|---|---|
+| The four funnel endpoints | **None today** — will change before production |
+| Payment webhook | HMAC-SHA256 over the canonical body |
+| Future (Group B) endpoints | `X-API-Key` header |
+
+Public HTTPS. **No VPN, no tunnel, no IP allow-list, no infrastructure change.**
 
 ---
 
@@ -76,43 +90,15 @@ the asynchronous referral webhook. Full breakdown in `PHASE_MATRIX.md`.
 
 | Environment | Base URL |
 |---|---|
-| Sandbox (integration testing) | `https://sandbox.api.vytalix.health` |
-| Production | `https://api.vytalix.health` |
+| Sandbox | `https://sandbox.api.vytalix.health` |
+| Production | Issued after sandbox sign-off |
 
-Production credentials are issued separately, after sandbox sign-off.
-
----
-
-## Credentials — delivered separately
-
-The five values below are **not** in this package by design. They are sent out of
-band and must go straight into your secret manager; never commit them.
-
-```bash
-VYTALIX_BASE_URL=https://sandbox.api.vytalix.health
-VYTALIX_API_KEY=<sent separately>          # X-API-Key header on /api/v2/*
-DISGLOBAL_WEBHOOK_SECRET=<sent separately> # HMAC key for the payment webhook
-VYTALIX_TEST_SUBJECT_REF=<sent separately> # seeded sandbox subject
-# scope list for your key: see the accompanying message
-```
-
----
-
-## Two directions of traffic
-
-```
-Disglobal ──X-API-Key──────────────▶ /api/v2/*            (you call us)
-Disglobal ──HMAC-signed body───────▶ /api/v2/webhooks/payment
-Vytalix   ──200 only after COMMIT──▶ Disglobal            (durable acknowledgement)
-```
-
-Authentication differs by direction: an API key for the read/write APIs, an
-HMAC signature over the canonical body for the payment webhook. Details in
-`QUICK_START.md` §4.
+All sandbox data is **synthetic** and carries **no clinical meaning**. A digital
+assessment is not a medical diagnosis.
 
 ---
 
 ## Support
 
-Quote the `X-Correlation-ID` response header (or `correlationId` in an error body)
-in any support request — that is how we locate your exact call.
+Send the **`X-Correlation-ID`** from the response headers plus the HTTP status —
+that locates your exact request. Never send credentials through a support channel.

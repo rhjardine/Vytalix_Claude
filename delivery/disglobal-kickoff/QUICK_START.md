@@ -224,5 +224,5 @@ on our side.
 
 - `openapi/vytalix-platform-v2.yaml` — the full contract; import it into your codegen.
 - `postman/vytalix_postman_collection.json` — every call above, ready to run.
-- `FAQ.md` — the questions that come up in the first week.
-- `KNOWN_LIMITATIONS.md` — what is intentionally not in Phase 1.
+- `INTEGRATION_FAQ.md` — specific questions during the build.
+- `PHASE_MATRIX.md` — available now vs planned vs out of scope.
