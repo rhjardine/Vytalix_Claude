@@ -9,12 +9,12 @@ when it is not. Nothing below is a promise about future availability.
 
 | Aspect | State | Evidence |
 |---|---|---|
-| Endpoint | **Live** — `POST /api/funnel/facial-analysis` | `server.ts:175`, `funnel.handler.ts:436` |
-| Authentication | **None** today | no `requireApiKey` on the funnel router |
-| Providers implemented | **two** — `mock` and `aws` (Rekognition) | `facial-analysis.service.ts:70`, `:80` |
-| **Provider active** | **`mock`** | default in `facial-analysis.service.ts:146`; `.env.example:50` `VISION_PROVIDER=mock` |
-| AWS SDK | Declared and installed | `package.json:40`; present in `node_modules` |
-| AWS credentials | **Not configured** | commented out in `.env.example`; resolved via the SDK default chain |
+| Endpoint | **Live** — `POST /api/funnel/facial-analysis` | Verified against a running service |
+| Authentication | **None** today | Same as the other funnel endpoints |
+| Providers implemented | **two** — `mock` and AWS Rekognition | Both present in the build |
+| **Provider active** | **`mock`** | Platform default; returned in every response |
+| AWS SDK | Declared and installed | Present in the deployed dependencies |
+| AWS credentials | **Not configured** | Resolved via the standard AWS credential chain |
 
 **Classification: code implemented, AWS not deployed.** The integration is written
 and its dependency is installed; what is missing is configuration and credentials,
@@ -24,21 +24,14 @@ not code.
 
 ## What the mock returns
 
-The mock is **deterministic**: it hashes the first 120 characters of the image and
-derives its numbers from that hash (`facial-analysis.service.ts:55-68`).
-
-```json
-{
-  "estimatedAge":   "35 + (hash % 30)   →  35–64",
-  "confidence":     "0.72 – 0.91",
-  "analysisPoints": 24,
-  "provider":       "mock"
-}
-```
+The mock is **deterministic**: its values are derived from the bytes of the image
+you send, not from any facial analysis. `estimatedAge` falls in the 35–64 range and
+`confidence` between 0.72 and 0.91, `analysisPoints` is constant at 24, and
+`provider` is always `"mock"`.
 
 Three consequences you must design around:
 
-1. **The number is not an age estimate.** It is a hash of the bytes you sent. A
+1. **The number is not an age estimate.** It is derived from the bytes you sent. A
    photo of a wall produces a number in the same range as a photo of a face.
 2. **The same image always yields the same result** — which makes it excellent for
    testing your wiring, and useless for validating clinical plausibility.
@@ -56,14 +49,14 @@ Not enabled here. Listed so the gap is explicit, not as a commitment:
 |---|---|
 | `VISION_PROVIDER=aws` | Switches the active provider |
 | AWS credentials | IAM role or key pair resolved by the SDK default chain |
-| IAM permission | **`rekognition:DetectFaces` only** — least privilege, per `docs/AWS_REKOGNITION_STAGING.md` |
+| IAM permission | **`rekognition:DetectFaces` only** — least privilege |
 | `AWS_REGION` | Defaults to `us-east-1` |
 | `REKOGNITION_TIMEOUT_MS` | Defaults to 5000 |
 | Optional | `FACIAL_FALLBACK_MOCK=true` falls back to mock if the real provider fails — **avoid in production**: it silently degrades real analysis into hashed noise |
 
-A staging runbook exists (`docs/AWS_REKOGNITION_STAGING.md`) with the IAM policy
-and a real-image test procedure. It is an operator procedure — **its existence is
-not evidence that AWS has been enabled anywhere.**
+An internal enablement procedure exists covering the IAM policy and a real-image
+test. **Its existence is not evidence that AWS has been enabled in any
+environment.**
 
 ---
 
@@ -74,8 +67,8 @@ not evidence that AWS has been enabled anywhere.**
 - **No image is retained beyond the analysis.** Only derived values are stored:
   `estimatedAge`, `confidence`, `analysisPoints`, `provider`, `status`,
   `analyzedAt` and identifiers. Raw images are not persisted.
-- **Image limits:** base64, minimum 100 characters, maximum ~2 MB encoded
-  (`funnel.handler.ts` `FacialSchema`). Larger payloads are rejected with `422`.
+- **Image limits:** base64, minimum 100 characters, maximum ~2 MB encoded. Larger
+  payloads are rejected with `422`.
 - **When AWS is enabled the response shape stays the same** — only `provider`
   changes to `aws` and the values become real. Your client should not need changes,
   provided it already reads `provider`.

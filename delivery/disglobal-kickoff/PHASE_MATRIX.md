@@ -28,7 +28,7 @@ Labels: **[V]** verified · **[I]** inference · **[C]** commercial decision ope
 
 | Capability | Endpoint | Why it is not Phase 1 |
 |---|---|---|
-| Biophysics assessment computed by Vytalix | `POST /api/v2/vitality/assess` | **[V]** operational (DG-04A). Requires 8 clinical measurements; Phase 1 sends a pre-computed questionnaire result instead |
+| Biophysics assessment computed by Vytalix | `POST /api/v2/vitality/assess` | **[V]** operational. Requires 8 clinical measurements; Phase 1 sends a pre-computed questionnaire result instead |
 | Read stored assessment | `GET /api/v2/vitality/{subjectRef}` | **[V]** operational |
 | Composite preventive score | `POST /api/v2/preventive/score` | **[V]** operational; needs biomarkers Disglobal does not currently send |
 | Referral eligibility | `GET /api/v2/referral/{subjectRef}` | **[V]** operational |

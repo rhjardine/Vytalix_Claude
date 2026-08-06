@@ -1,18 +1,16 @@
 # Common Integration Mistakes
 
-Every item below is a mistake that was actually made or actually reproduced during
-Vytalix's own validation runs. None is hypothetical. Reading this should save you
-a day.
+Each item below describes behaviour reproduced against a running service, with the
+request shape that triggers it. None is hypothetical.
 
 ## 1 · Treating a `200` as proof the data is sensible
 
 **The mistake.** The assessment endpoints validate ranges, not plausibility. A
 payload with the right shape and wrong units returns `200` with a nonsense result.
 
-**How it showed up.** An example payload sent `digitalReflexes: {high:12, long:10,
-width:8}`. The engine multiplies the three dimensions, so it received **960**
-against a reference range of **1–5**, and reported a biological age of **163** for
-a 45-year-old. The call succeeded the whole time.
+**Example.** `digitalReflexes: {high:12, long:10, width:8}` reduces to **960**
+against an expected range of **1–5**, and returns a biological age of **163** for a
+45-year-old subject — with HTTP `200` throughout.
 
 **Avoid it.** Assert on the *value*, not the status. If `biologicalAge` is more
 than ~20 years from `chronologicalAge`, treat it as a bug in your payload until

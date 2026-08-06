@@ -58,8 +58,8 @@ engine behind them.
    7. NOTIFICACIONES             fired post-commit, best-effort
 ```
 
-**[V]** All four funnel endpoints are mounted and live (`server.ts:175`;
-`sandbox/tests/full-funnel.test.ts` passes 8/8).
+**[V]** All four funnel endpoints are live and covered by an automated regression
+suite.
 **[V]** `POST /api/funnel/leads` also exists for lead capture before step 1 — use it
 if you want the journey correlated from first contact.
 
@@ -74,7 +74,7 @@ if you want the journey correlated from first contact.
   PSP + checkout      ──HTTPS──▶     /api/v2/webhooks/…   (HMAC-signed)
                                           │
                                           ▼
-                                     PostgreSQL (tenant-scoped)
+                                     persistence (tenant-scoped)
                                           │
                                           ▼
                                      activation + notifications
@@ -96,9 +96,8 @@ There is no VPN, no tunnel and no IP allow-list. **[V]**
 | 4 | `/api/funnel/booking` | POST | Request a consultation (online / in person) | **none** |
 | 5 | `/api/v2/webhooks/payment` | POST | Confirm payment → activate service | **HMAC-SHA256** |
 
-**[V]** Endpoints 1–4 currently require **no authentication** (`funnel.handler.ts` —
-no `requireApiKey` on the router). Endpoint 5 authenticates by HMAC signature over
-the canonical body.
+**[V]** Endpoints 1–4 currently require **no authentication**. Endpoint 5
+authenticates by HMAC signature over the canonical body.
 
 > **[C] Open decision.** That the funnel is unauthenticated is the current state,
 > not a commitment. Before production Vytalix intends to place these behind a
@@ -116,8 +115,8 @@ the canonical body.
 | `POST /api/v2/engagement/events` | Engagement telemetry |
 | `GET /api/v2/insights/cohort` | Anonymised population metrics |
 
-**[V]** These are operational, API-Key authenticated, and validated end to end
-(DG-04A). They are **not** required for the flow in §2.
+**[V]** These are operational, API-Key authenticated, and validated end to end.
+They are **not** required for the flow in §2.
 
 **[I]** They become relevant when Disglobal wants Vytalix to *compute* the clinical
 result rather than receive one — a natural Phase 2, not a gap in Phase 1.
@@ -154,7 +153,7 @@ event, intentId, amount, currency, timestamp, subjectRef, metadata
 |---|---|---|
 | User identity, UI, journey | Disglobal | — |
 | Facial image capture | Disglobal | sends `imageBase64` |
-| **Questionnaire scoring and classification** | **Disglobal** | **[V]** the endpoint receives `score`, `category`, `yearsBiological` and 5 dimension values already computed, and persists them without recalculating (`funnel.handler.ts:229-246`) |
+| **Questionnaire scoring and classification** | **Disglobal** | **[V]** the endpoint receives `score`, `category`, `yearsBiological` and 5 dimension values already computed, and persists them without recalculating |
 | Rendering the initial result | Disglobal | **[V]** the questionnaire endpoint returns only `{ id }` — no interpretation |
 | Charging the user | Disglobal | Disglobal's PSP |
 | Persistence of every step | Vytalix | — |
