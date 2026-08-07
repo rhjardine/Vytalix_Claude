@@ -7,7 +7,7 @@
   "variable": [
     {
       "key": "base_url",
-      "value": "https://sandbox.api.vytalix.health"
+      "value": "http://localhost:3001"
     },
     {
       "key": "webhook_secret",
@@ -134,7 +134,7 @@
           }
         },
         {
-          "name": "Escáner Facial (Biometría AWS Rekognition)",
+          "name": "Escáner Facial",
           "request": {
             "method": "POST",
             "header": [
@@ -162,7 +162,7 @@
           }
         },
         {
-          "name": "Solicitud de Consulta Médica (Online / Presencial)",
+          "name": "Solicitud de Consulta",
           "request": {
             "method": "POST",
             "header": [
