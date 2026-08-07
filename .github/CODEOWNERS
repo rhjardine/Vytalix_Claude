@@ -1,0 +1,31 @@
+# =============================================================================
+# Vytalix Platform — CODEOWNERS
+# Review requirements aligned with the truth hierarchy (ADR-008) and
+# Repository-Governance.md. Owners are required reviewers for the paths below.
+#
+# NOTE: adjust the @rhjardine handle / add team handles as the org grows.
+# =============================================================================
+
+# Default owner for everything not matched below
+*                               @rhjardine
+
+# ── Governance & architecture authority (Nivel 2) ────────────────────
+/docs/governance/               @rhjardine
+/src/dental/docs/trd/           @rhjardine
+/src/dental/docs/trd/adr/       @rhjardine
+
+# ── Engineering platform & CI (Sprint E1 scope) ──────────────────────
+/.github/                       @rhjardine
+/tools/aek/                     @rhjardine
+/Makefile                       @rhjardine
+
+# ── Nivel 1 critical artifacts (require architect review) ────────────
+/openapi/                       @rhjardine
+/prisma/                        @rhjardine
+/src/platform/db.ts             @rhjardine
+/src/api/middlewares/           @rhjardine
+
+# ── Clinical & financial domains (immutable invariants, ADR-002/006) ─
+/src/core/                      @rhjardine
+/src/longevity/                 @rhjardine
+/src/dental/                    @rhjardine

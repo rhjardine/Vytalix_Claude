@@ -202,7 +202,7 @@ export class PreventiveScoreService {
     // Load latest biophysics assessment
     const bioAge = await withTenant(tenantId, (tc) =>
       tc.queryOne(
-        `SELECT "biologicalAge"::float, "differentialAge"::float, "ageAtSnapshot"
+        `SELECT "biologicalAge"::float, "differentialAge"::float
          FROM biological_age_assessments
          WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid AND "assessmentType"='BIOPHYSICS'
          ORDER BY "assessedAt" DESC LIMIT 1`,

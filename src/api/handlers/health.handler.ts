@@ -68,8 +68,8 @@ export function createHealthRouter(): Router {
       checkDependency('database', checkDbHealth),
       checkDependency('redis',    checkRedisHealth),
       checkDependency('event_bus', async () => {
-        const { eventBus } = await import('../events/event-bus')
-        return eventBus.listenerCount('vitality.assessed') >= 0
+        const { eventBus } = await import('../../platform/event-bus')
+        return typeof eventBus?.publish === 'function'
       }),
     ])
 

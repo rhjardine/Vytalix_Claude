@@ -26,26 +26,16 @@ import { withTenant, getDb } from '../../platform/db'
 import { logger } from '../../platform/logger'
 import { getRedisClient } from '../../platform/redis'
 import { requireApiKey } from '../middlewares/api-key.middleware'
+import { getCommercialCatalog, listTherapies, TherapyCategory } from '../../longevity/therapy-catalog'
 
 // ─────────────────────────────────────────────────────────────────
 // Auth middleware — API Key resolution
 // ─────────────────────────────────────────────────────────────────
 
-interface ApiKeyContext {
-  tenantId: string
-  keyId: string
-  permissions: Record<string, string[]>
-  rateLimitTier: string
-}
-
-declare global {
-  namespace Express {
-    interface Request {
-      apiKeyCtx?: ApiKeyContext
-      correlationId: string
-    }
-  }
-}
+// The Express Request augmentation (apiKeyCtx, correlationId) is provided
+// canonically by api-key.middleware.ts (imported above via requireApiKey).
+// A local duplicate declaration here caused conflicting `apiKeyCtx` types
+// (TS2717); removed to use the single canonical ApiKeyContext.
 
 // NOTE: apiKeyAuth is now the canonical requireApiKey from api-key.middleware
 // It provides: brute-force protection, Redis cache, full audit trail, scope enforcement
@@ -252,17 +242,17 @@ export function createExternalV2Router(): Router {
 
         // Load context for referral evaluation
         const [bioAge, riskScore, engagement] = await Promise.all([
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ differentialAge: number }>(
             `SELECT "differentialAge"::float FROM biological_age_assessments
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid AND "assessmentType"='BIOPHYSICS'
              ORDER BY "assessedAt" DESC LIMIT 1`, [tenantId, patientId]
           )),
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ riskCategory: string }>(
             `SELECT "riskCategory" FROM risk_scores
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
              ORDER BY "computedAt" DESC LIMIT 1`, [tenantId, patientId]
           )),
-          withTenant(tenantId, tc => tc.queryOne(
+          withTenant(tenantId, tc => tc.queryOne<{ tier: string }>(
             `SELECT tier FROM engagement_scores WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid`,
             [tenantId, patientId]
           )),
@@ -296,7 +286,16 @@ export function createExternalV2Router(): Router {
 
       try {
         const patientId = body.patientId ?? await resolveSubjectRef(tenantId, body.subjectRef!)
-        await engagementSvc.recordEvents(tenantId, patientId, body.events, body.source)
+        // The schema requires `type` and defaults `payload` to {}, but the inferred
+        // type widens both to optional. Normalise to the domain shape here; the
+        // guard mirrors the schema and is unreachable while validation runs.
+        const events = body.events.map((e) => {
+          if (e.type === undefined) {
+            throw Object.assign(new Error('engagement event requires a type'), { statusCode: 422 })
+          }
+          return { type: e.type, payload: e.payload ?? {}, occurredAt: e.occurredAt }
+        })
+        await engagementSvc.recordEvents(tenantId, patientId, events, body.source)
         return res.status(202).json({ accepted: body.events.length, patientId })
       } catch (err: any) {
         return res.status(err.statusCode ?? 500).json(problemDetail(err.statusCode ?? 500, err.message, req.correlationId))
@@ -322,6 +321,24 @@ export function createExternalV2Router(): Router {
     }
   )
 
+  // ── GET /api/v2/catalog ───────────────────────────────────────────
+  // Commercial catalog of therapies + nutraceutical combos.
+  // Global product listing (no PHI, no tenant data) — API-key authenticated.
+  // Optional ?category= filters therapies by TherapyCategory.
+  router.get(
+    '/catalog',
+    apiKeyAuth('catalog:read'),
+    (req: Request, res: Response) => {
+      const category = req.query.category as TherapyCategory | undefined
+      const catalog = getCommercialCatalog()
+      const therapies = category ? listTherapies(category) : catalog.therapies
+      return res.json({
+        data: { version: catalog.version, therapies, nutraceuticals: catalog.nutraceuticals },
+        meta: { correlationId: req.correlationId, timestamp: new Date().toISOString() },
+      })
+    }
+  )
+
   return router
 }
 
@@ -332,7 +349,7 @@ export function createExternalV2Router(): Router {
 async function resolveSubjectRef(tenantId: string, subjectRef: string): Promise<string> {
   // subjectRef maps to patient's external ID (stored in externalIds JSONB or as mrn)
   const patient = await withTenant(tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ id: string }>(
       `SELECT id FROM patients
        WHERE "tenantId"=$1::uuid AND (mrn=$2 OR "externalIds"->>'disglobal_ref'=$2)
        LIMIT 1`,
@@ -356,7 +373,7 @@ async function computePreventiveAndReferralAsync(
   ])
 
   const cvRiskCategory = await withTenant(tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ riskCategory: string }>(
       `SELECT "riskCategory" FROM risk_scores WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
        ORDER BY "computedAt" DESC LIMIT 1`, [tenantId, patientId]
     )

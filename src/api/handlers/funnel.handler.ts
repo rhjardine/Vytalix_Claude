@@ -13,11 +13,12 @@
 // Validación: Zod en cada handler — falla rápido con 422 descriptivo
 // =============================================================================
 
-import { Request, Response } from 'express'
+import { Request, Response, Router } from 'express'
 import { z, ZodError }       from 'zod'
 import { randomUUID, createHash } from 'crypto'
-import { getDb }             from '../../platform/db'
+import { withTenant }        from '../../platform/db'
 import { logger }            from '../../platform/logger'
+import { analyzeFace }       from '../../longevity/facial-analysis.service'
 
 // ─── Tenant por defecto para el funnel público ────────────────────
 // En multi-tenant real esto vendría del API key registry
@@ -146,57 +147,62 @@ export async function handleSubmitLead(req: Request, res: Response) {
       'El consentimiento de tratamiento de datos es requerido para continuar.', id)
   }
 
-  const db       = getDb()
   const tenantId = DEFAULT_TENANT()
 
-  // Anti-spam: bloquear mismo email en últimas 24h para el mismo tenant
-  const recent = await db.rawQuery(
-    `SELECT id FROM funnel_leads
-     WHERE email = $1
-       AND "tenantId" = $2::uuid
-       AND "createdAt" > NOW() - INTERVAL '24 hours'
-     LIMIT 1`,
-    [d.email.toLowerCase(), tenantId],
-  )
+  // All funnel writes run inside the tenant RLS context (withTenant sets
+  // app.current_tenant_id, so PostgreSQL RLS is enforced at runtime).
+  const outcome = await withTenant(tenantId, async (tc) => {
+    // Anti-spam: bloquear mismo email en últimas 24h para el mismo tenant
+    const recent = await tc.queryOne<{ id: string }>(
+      `SELECT id FROM funnel_leads
+       WHERE email = $1
+         AND "tenantId" = $2::uuid
+         AND "createdAt" > NOW() - INTERVAL '24 hours'
+       LIMIT 1`,
+      [d.email.toLowerCase(), tenantId],
+    )
+    if (recent) return { status: 'EXISTING' as const, id: recent.id }
 
-  if (recent.rows.length > 0) {
+    const inserted = await tc.queryOne<{ id: string }>(
+      `INSERT INTO funnel_leads (
+        "tenantId", name, email, organization, phone, country,
+        "interestType", message, source,
+        "utmSource", "utmCampaign", "referralCode",
+        "vitalityAssessmentId", "facialAnalysisId",
+        "consentMarketing", "consentDataProcessing", status
+      ) VALUES (
+        $1::uuid, $2, $3, $4, $5, $6,
+        $7, $8, $9,
+        $10, $11, $12,
+        $13, $14,
+        $15, $16, 'NEW'
+      ) RETURNING id`,
+      [
+        tenantId,
+        d.name, d.email.toLowerCase(), d.organization ?? null,
+        d.phone ?? null, d.country ?? null,
+        d.interestType, d.message ?? null, d.source,
+        d.utmSource ?? null, d.utmCampaign ?? null, d.referralCode ?? null,
+        d.vitalityAssessmentId ?? null, d.facialAnalysisId ?? null,
+        d.consentMarketing, d.consentDataProcessing,
+      ],
+    )
+    return { status: 'NEW' as const, id: inserted!.id }
+  })
+
+  if (outcome.status === 'EXISTING') {
     // Responder 200 con el ID existente — no revelar que es duplicado (privacidad)
     return res.status(200).json({
-      data: { id: recent.rows[0].id, status: 'EXISTING' },
+      data: { id: outcome.id, status: 'EXISTING' },
       meta: { correlationId: id, timestamp: new Date().toISOString() },
     })
   }
-
-  const result = await db.rawQuery(
-    `INSERT INTO funnel_leads (
-      "tenantId", name, email, organization, phone, country,
-      "interestType", message, source,
-      "utmSource", "utmCampaign", "referralCode",
-      "vitalityAssessmentId", "facialAnalysisId",
-      "consentMarketing", "consentDataProcessing", status
-    ) VALUES (
-      $1::uuid, $2, $3, $4, $5, $6,
-      $7, $8, $9,
-      $10, $11, $12,
-      $13, $14,
-      $15, $16, 'NEW'
-    ) RETURNING id`,
-    [
-      tenantId,
-      d.name, d.email.toLowerCase(), d.organization ?? null,
-      d.phone ?? null, d.country ?? null,
-      d.interestType, d.message ?? null, d.source,
-      d.utmSource ?? null, d.utmCampaign ?? null, d.referralCode ?? null,
-      d.vitalityAssessmentId ?? null, d.facialAnalysisId ?? null,
-      d.consentMarketing, d.consentDataProcessing,
-    ],
-  )
 
   logger.info({ correlationId: id, email: d.email, source: d.source }, 'Funnel lead created')
 
   return res.status(201).json({
     data: {
-      id:                    result.rows[0].id,
+      id:                    outcome.id,
       status:                'NEW',
       confirmationEmailSent: false, // TODO: integrar servicio de email
     },
@@ -217,10 +223,9 @@ export async function handleSubmitAssessment(req: Request, res: Response) {
   }
 
   const d        = parsed.data
-  const db       = getDb()
   const tenantId = DEFAULT_TENANT()
 
-  const result = await db.rawQuery(
+  const inserted = await withTenant(tenantId, (tc) => tc.queryOne<{ id: string }>(
     `INSERT INTO vitality_assessments (
       "tenantId", score, category, "yearsBiological", "chronologicalAgeGroup",
       "dimEnergiaEstadoMental", "dimSuenoCognicion", "dimComposicionCorporal",
@@ -246,7 +251,7 @@ export async function handleSubmitAssessment(req: Request, res: Response) {
       d.sessionId ?? null,
       d.leadId ?? null,
     ],
-  )
+  ))
 
   logger.info(
     { correlationId: id, score: d.score, category: d.category },
@@ -254,7 +259,7 @@ export async function handleSubmitAssessment(req: Request, res: Response) {
   )
 
   return res.status(201).json({
-    data: { id: result.rows[0].id },
+    data: { id: inserted!.id },
     meta: { correlationId: id, timestamp: new Date().toISOString() },
   })
 }
@@ -289,27 +294,25 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
   // Hash de la imagen para auditoría — imagen NO se almacena
   const imageHash = createHash('sha256').update(imageBase64).digest('hex')
 
-  const provider = process.env.VISION_PROVIDER ?? 'mock'
   let estimatedAge: number
   let confidence: number
+  let analysisProvider: string
 
-  if (provider === 'mock') {
-    const result = deterministicAge(imageBase64)
-    estimatedAge = result.age
-    confidence   = Math.round(result.confidence * 100) / 100
-  } else {
-    // TODO: integrar proveedor real (openai | azure | aws)
-    // Retornar 501 hasta que se configure el proveedor
-    logger.warn({ provider, correlationId: id }, 'Vision provider not implemented')
-    return problem(res, 501,
-      `El proveedor de visión '${provider}' no está configurado aún. ` +
-      `Configura VISION_PROVIDER=mock para desarrollo.`, id)
+  try {
+    const analysis = await analyzeFace({ imageBase64, correlationId: id })
+    estimatedAge     = analysis.estimatedAge
+    confidence       = analysis.confidence
+    analysisProvider = analysis.provider
+  } catch (err: any) {
+    logger.warn({ err, correlationId: id }, 'Facial analysis failed')
+    return problem(res, err.statusCode ?? 500, err.message, id)
   }
 
-  const db       = getDb()
+  const provider = analysisProvider
+
   const tenantId = DEFAULT_TENANT()
 
-  const result = await db.rawQuery(
+  const inserted = await withTenant(tenantId, (tc) => tc.queryOne<{ id: string }>(
     `INSERT INTO facial_analyses (
       "tenantId", "estimatedAge", confidence, "analysisPoints",
       status, provider, "imageHash", "analyzedAt", "leadId"
@@ -317,7 +320,7 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
       $1::uuid, $2, $3, 24, 'COMPLETED', $4, $5, NOW(), $6::uuid
     ) RETURNING id`,
     [tenantId, estimatedAge, confidence, provider, imageHash, leadId ?? null],
-  )
+  ))
 
   logger.info(
     { correlationId: id, estimatedAge, provider },
@@ -326,7 +329,7 @@ export async function handleFacialAnalysis(req: Request, res: Response) {
 
   return res.json({
     data: {
-      id:             result.rows[0].id,
+      id:             inserted!.id,
       estimatedAge,
       confidence,
       analysisPoints: 24,
@@ -359,7 +362,6 @@ export async function handleBooking(req: Request, res: Response) {
   }
 
   const d          = parsed.data
-  const db         = getDb()
   const tenantId   = DEFAULT_TENANT()
   const waNumber   = process.env.WHATSAPP_NUMBER ?? '58412XXXXXXX'
 
@@ -376,7 +378,7 @@ export async function handleBooking(req: Request, res: Response) {
   )
   const whatsappUrl = `https://wa.me/${waNumber}?text=${waText}`
 
-  await db.rawQuery(
+  await withTenant(tenantId, (tc) => tc.execute(
     `INSERT INTO bookings (
       "tenantId", name, email, phone, "consultationType",
       "specialistPreference", "preferredDate", "preferredTime", timezone,
@@ -396,7 +398,7 @@ export async function handleBooking(req: Request, res: Response) {
       d.vitalityScore ?? null, d.vitalityCategory ?? null, d.chiefConcern ?? null,
       code, d.leadId ?? null,
     ],
-  )
+  ))
 
   logger.info(
     { correlationId: id, consultationType: d.consultationType, code },
@@ -419,4 +421,19 @@ export async function handleBooking(req: Request, res: Response) {
     },
     meta: { correlationId: id, timestamp: new Date().toISOString() },
   })
+}
+
+// =============================================================================
+// ROUTER — wires the public funnel handlers (no auth; correlationId is set
+// globally in server.ts before routes). Route paths mirror the OpenAPI
+// contract (/api/funnel/*).
+// =============================================================================
+
+export function createFunnelRouter(): Router {
+  const router = Router()
+  router.post('/leads',                handleSubmitLead)       // Lead capture
+  router.post('/vitality-assessment',  handleSubmitAssessment) // Preventive Questionnaire
+  router.post('/facial-analysis',      handleFacialAnalysis)   // Facial Scanner
+  router.post('/booking',              handleBooking)          // Medical Consultation
+  return router
 }

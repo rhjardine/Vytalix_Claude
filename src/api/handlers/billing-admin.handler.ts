@@ -17,7 +17,8 @@ import { z } from 'zod'
 import { getDb } from '../../platform/db'
 import { logger } from '../../platform/logger'
 import { generateApiKey } from '../middlewares/api-key.middleware'
-import { getMonthlyUsage, computeRevenueShare } from '../../platform/metering.service'
+import { authMiddleware, requireMinRole } from '../middlewares/auth.middleware'
+import { getMonthlyUsage, computeRevenueShare, getUnitPriceCents } from '../../platform/metering.service'
 
 // ── Input schemas ─────────────────────────────────────────────────
 
@@ -39,6 +40,20 @@ const SetQuotaSchema = z.object({
 
 export function createBillingAdminRouter(): Router {
   const router = Router()
+
+  // ── Authentication + authorisation (single choke point) ──────────
+  // Every route below is an internal platform operation that crosses tenant
+  // boundaries: it provisions or revokes credentials, reads billing figures and
+  // sets quotas. None of them may be reachable anonymously.
+  //
+  // Mounted here rather than per-route so a future route added to this router
+  // is protected by construction — it cannot be forgotten. The chain reuses the
+  // platform's existing JWT + RBAC middleware; nothing new is introduced.
+  //
+  // authMiddleware rejects a missing/expired/forged token with 401 before any
+  // handler (and therefore any database write) is reached. requireMinRole then
+  // rejects an authenticated but under-privileged caller with 403.
+  router.use(authMiddleware, requireMinRole('ORG_ADMIN'))
 
   // ── POST /admin/tenants/:tenantId/api-keys ───────────────────────
   router.post('/tenants/:tenantId/api-keys', async (req: Request, res: Response) => {
@@ -96,7 +111,7 @@ export function createBillingAdminRouter(): Router {
 
     // Invalidate cached key metadata
     try {
-      const { getRedisClient } = await import('../lib/redis')
+      const { getRedisClient } = await import('../../platform/redis')
       const redis   = getRedisClient()
       const pattern = `apikey:*`
       // Note: in production use SCAN, not KEYS, for large keyspaces
@@ -114,12 +129,12 @@ export function createBillingAdminRouter(): Router {
     const usage = await getMonthlyUsage(tenantId, yearMonth)
     const total = usage['TOTAL'] ?? 0
 
-    // Compute estimated invoice
-    const { DEFAULT_UNIT_PRICES_CENTS } = await import('./metering.service') as any
+    // Compute estimated invoice — prices come from the metering module's public
+    // accessor; the price table stays private to its owner.
     let estimatedCents = 0
     for (const [op, count] of Object.entries(usage)) {
       if (op !== 'TOTAL') {
-        estimatedCents += (DEFAULT_UNIT_PRICES_CENTS[op] ?? 0) * (count as number)
+        estimatedCents += getUnitPriceCents(op) * (count as number)
       }
     }
 

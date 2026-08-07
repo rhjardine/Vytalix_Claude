@@ -38,6 +38,16 @@ const DEFAULT_UNIT_PRICES_CENTS: Record<MeterableOperation, number> = {
   EXTERNAL_OBSERVATION:   3,    // $0.03 — ingest call
 }
 
+/**
+ * Public read accessor for the per-operation unit price.
+ * The price table itself stays private: it is billing knowledge owned by this
+ * module, and exposing the raw record would let any consumer mutate pricing at
+ * runtime. Callers that need to value usage ask for a price instead.
+ */
+export function getUnitPriceCents(operation: string): number {
+  return DEFAULT_UNIT_PRICES_CENTS[operation as MeterableOperation] ?? 0
+}
+
 export interface MeterEvent {
   tenantId:    string
   keyId:       string
@@ -163,7 +173,7 @@ export async function checkQuota(
 async function getTenantQuotaConfig(tenantId: string): Promise<QuotaConfig> {
   try {
     const db  = getDb()
-    const row = await db.rawQueryOne(
+    const row = await db.rawQueryOne<{ monthlyApiLimit: number }>(
       `SELECT "monthlyApiLimit" FROM tenants WHERE id = $1::uuid`,
       [tenantId]
     )
@@ -208,7 +218,7 @@ export async function computeRevenueShare(
          AND TO_CHAR("convertedAt", 'YYYY-MM') = $2`,
       [tenantId, yearMonth]
     ),
-    db.rawQueryOne(
+    db.rawQueryOne<{ revenueShareRatio: number }>(
       `SELECT "revenueShareRatio" FROM tenants WHERE id = $1::uuid`,
       [tenantId]
     ),

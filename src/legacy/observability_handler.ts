@@ -103,10 +103,11 @@ export async function metricsHandler(_req: Request, res: Response) {
       db.rawQuery('SELECT COUNT(*)::int AS n FROM clinical_observations'),
       db.rawQuery('SELECT COUNT(*)::int AS n FROM recommendations'),
     ])
+    // rawQuery already returns the row array (T[]), not a pg QueryResult.
     dbCounts = {
-      patients:     Number(r1.rows[0]?.n ?? 0),
-      observations: Number(r2.rows[0]?.n ?? 0),
-      decisions:    Number(r3.rows[0]?.n ?? 0),
+      patients:     Number(r1[0]?.n ?? 0),
+      observations: Number(r2[0]?.n ?? 0),
+      decisions:    Number(r3[0]?.n ?? 0),
     }
   } catch {
     // Return partial metrics if DB is unavailable

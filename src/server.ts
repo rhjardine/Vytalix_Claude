@@ -8,10 +8,12 @@ import express from 'express'
 import helmet  from 'helmet'
 import cors    from 'cors'
 import crypto  from 'node:crypto'
+import path    from 'node:path'
 
 import { logger }            from './platform/logger'
 import { checkDbHealth }     from './platform/db'
 import { checkRedisHealth }  from './platform/redis'
+import { validateConfigOrExit } from './platform/config.validation'
 import { flushMeterStream }  from './platform/metering.service'
 import {
   healthHandler,
@@ -24,9 +26,11 @@ import {
 
 // ── Routers ───────────────────────────────────────────────────────
 import { createExternalV2Router } from './api/handlers/external-v2.handler'
-// import { createFunnelRouter, createExchangeRateHandler } from './api/handlers/funnel.handler'
+import { createFunnelRouter } from './api/handlers/funnel.handler'
 import { createBillingAdminRouter } from './api/handlers/billing-admin.handler'
 import { PlatformPipelineOrchestrator, registerPlatformEventListeners } from './api/pipelines/pipeline-v2.orchestrator'
+import { createPaymentWebhookRouter } from './api/handlers/payment-webhook.handler'
+import { registerPaymentPipeline, reconcilePendingPayments } from './api/pipelines/payment-pipeline'
 
 // ── CFE Dental Routers (Sprint 2A — mounting previously orphaned routers) ──
 import { dentalAdminRouter }    from './dental/routers/dental-admin.router'
@@ -128,12 +132,54 @@ app.get('/health',    healthHandler)
 app.get('/metrics',   metricsHandler)
 app.get('/metrics/prometheus', prometheusHandler)
 
+// ── API documentation (public, no auth) ──────────────────────────
+// GET /openapi.yaml — canonical platform contract, downloadable/importable
+// GET /docs         — Redoc viewer rendering that same spec
+// Redoc is loaded from a CDN, so this single route widens the global CSP
+// (scriptSrc 'self') to allow that origin. No inline script is used and no
+// npm dependency is added.
+const OPENAPI_SPEC_PATH = path.join(__dirname, '..', 'openapi', 'vytalix-platform-v2.yaml')
+
+app.get('/openapi.yaml', (_req, res) => {
+  res.type('application/yaml').sendFile(OPENAPI_SPEC_PATH, (err) => {
+    if (err) res.status(404).json({ error: 'OpenAPI specification not found' })
+  })
+})
+
+app.get(
+  '/docs',
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", 'https://cdn.redoc.ly'],
+      workerSrc:  ["'self'", 'blob:'],
+      styleSrc:   ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc:    ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc:     ["'self'", 'data:'],
+    },
+  }),
+  (_req, res) => {
+    res.type('html').send(
+      `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>Vytalix Platform API</title>` +
+      `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `</head><body style="margin:0">` +
+      `<redoc spec-url="/openapi.yaml"></redoc>` +
+      `<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>` +
+      `</body></html>`,
+    )
+  },
+)
+
 // ── Public Funnel API (no auth) ───────────────────────────────────
-// app.use('/api/funnel',        createFunnelRouter())
+app.use('/api/funnel', createFunnelRouter())
 // app.use('/api/exchange-rate', createExchangeRateHandler())
 
 // ── External API v2 (API Key auth — Disglobal + partners) ────────
 app.use('/api/v2', createExternalV2Router())
+
+// ── Payment webhook (HMAC-signed — Disglobal → Vytalix) ──────────
+app.use('/api/v2', createPaymentWebhookRouter())
 
 // ── CFE Dental API — Admin (tenant settings, catalog, analytics) ─
 // Injects dental tenant context from X-Tenant-ID + X-User-ID headers.
@@ -146,7 +192,9 @@ app.use('/api/v2/dental/commerce', dentalTenantContext, dentalCommerceRouter)
 // ── CFE Dental API — Core (quotes, treatments, inventory check) ──
 app.use('/api/v2/dental/core',     dentalTenantContext, dentalCoreRouter)
 
-// ── Admin API (JWT auth — internal only) ─────────────────────────
+// ── Admin API (internal only) ────────────────────────────────────
+// The JWT + RBAC chain is mounted inside createBillingAdminRouter() so it
+// applies to every route of that router by construction.
 app.use('/admin', createBillingAdminRouter())
 
 // ── RFC 7807 Error handler (last middleware) ──────────────────────
@@ -166,13 +214,28 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // const platformOrchestrator = new PlatformPipelineOrchestrator()
 // registerPlatformEventListeners(platformOrchestrator)
 
+// ── Payment pipeline (PaymentConfirmed → activation + notification) ──
+registerPaymentPipeline()
+
 // ── Metering flush (every 60s) ────────────────────────────────────
 setInterval(async () => {
   const flushed = await flushMeterStream()
   if (flushed > 0) logger.debug({ flushed }, 'Meter events flushed')
 }, 60_000)
 
+// ── Payment reconciliation sweep (every 60s) ──────────────────────
+// Re-publishes committed payments whose activation event was lost (EventBus
+// failure or process death after COMMIT). Idempotent by design.
+setInterval(async () => {
+  const reconciled = await reconcilePendingPayments()
+  if (reconciled > 0) logger.warn({ reconciled }, 'Stuck payments re-published for activation')
+}, 60_000)
+
 // ── Start ─────────────────────────────────────────────────────────
+// Refuses to boot outside development/test if a critical secret is missing or
+// still set to a value published in this repository.
+validateConfigOrExit()
+
 const PORT = Number(process.env.PORT ?? 3001)
 app.listen(PORT, () => {
   logger.info({ port: PORT, env: process.env.NODE_ENV ?? 'development' }, '🚀 Vytalix Platform started')
@@ -183,12 +246,14 @@ app.listen(PORT, () => {
       'GET  /readiness',
       'GET  /health    (alias → /readiness)',
       'GET  /metrics',
+      // API documentation (public)
+      'GET  /docs        (Redoc viewer)',
+      'GET  /openapi.yaml',
       // Funnel API (public)
       'POST /api/funnel/leads',
       'POST /api/funnel/vitality-assessment',
-      'POST /api/funnel/facial-analysis (stub)',
+      'POST /api/funnel/facial-analysis',
       'POST /api/funnel/booking',
-      'GET  /api/exchange-rate',
       // External API v2 (API Key — Disglobal + partners)
       'POST /api/v2/vitality/assess',
       'GET  /api/v2/vitality/:subjectRef',
@@ -196,6 +261,8 @@ app.listen(PORT, () => {
       'GET  /api/v2/referral/:subjectRef',
       'POST /api/v2/engagement/events',
       'GET  /api/v2/insights/cohort',
+      // Payment webhook (HMAC-signed — Disglobal)
+      'POST /api/v2/webhooks/payment',
       // CFE Dental — Admin
       'POST /api/v2/dental/admin/catalog',
       'GET  /api/v2/dental/admin/catalog',
