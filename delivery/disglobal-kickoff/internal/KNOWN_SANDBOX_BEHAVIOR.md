@@ -105,7 +105,7 @@ to the **product** of their three dimensions:
 - `staticBalance` → `high × long × width`, expected order of magnitude **10–40**
 
 Sending values ten times too large still returns `200`, but the reported
-biological age will be meaningless. The reference payload in `QUICK_START.md` §3
+biological age will be meaningless. The reference payload in `FUNNEL_API_REFERENCE.md` §3
 is calibrated and safe to start from.
 
 ---

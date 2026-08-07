@@ -1,91 +1,66 @@
-# Vytalix — Partner Integration Kit
+# Vytalix — Disglobal Integration Package · Phase 1
 
-**For Disglobal · Phase 1**
+This package covers the first integration between Vytalix and Disglobal. It
+describes the endpoints available for that integration, their behaviour and their
+current limitations.
 
-Everything needed to evaluate, plan and build the integration. Self-contained: no
-repository access, no SDK, no VPN.
+It does not describe the Vytalix platform as a whole. Capabilities outside this
+phase are listed under *Future platform roadmap* and are not part of the current
+contract.
 
-> **New here? → [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md)**
-> Four calls, under an hour, working integration.
-
----
-
-## What this platform does
-
-Vytalix is a clinical intelligence engine behind a preventive-health journey:
-facial scan → preventive questionnaire → initial result → consultation request →
-payment → service activation.
-
-**Disglobal owns** the user, the interface, questionnaire scoring and payment.
-**Vytalix owns** persistence, activation, notifications and the clinical engine.
+**Start here:** [`PHASE1_SCOPE_AND_LIMITATIONS.md`](PHASE1_SCOPE_AND_LIMITATIONS.md)
+— what exists, what does not, and why.
+**Then:** [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md) — a working
+integration in under an hour.
 
 ---
 
-## Read in this order
+# Phase 1 integration scope
 
-| # | Document | The one question it answers |
+The user journey covered by this integration: facial scan → preventive
+questionnaire → initial result → consultation request → payment → service
+activation.
+
+| Endpoint | Method | Authentication |
 |---|---|---|
-| 1 | [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md) | How do I get something working today? |
-| 2 | [`DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md`](DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md) | What am I integrating, and who owns what? |
-| 3 | [`FUNNEL_API_REFERENCE.md`](FUNNEL_API_REFERENCE.md) | The four Phase 1 endpoints, field by field, with captured responses |
-| 4 | [`API_QUICK_REFERENCE.md`](API_QUICK_REFERENCE.md) | Everything at a glance, both groups |
-| 5 | [`INTEGRATION_FLOW_FASE1.md`](INTEGRATION_FLOW_FASE1.md) | In what order do the calls happen? |
-| 6 | [`PAYMENT_AND_NOTIFICATION_FLOW.md`](PAYMENT_AND_NOTIFICATION_FLOW.md) | How does payment and activation work? |
-| 7 | [`KNOWN_SANDBOX_BEHAVIOR.md`](KNOWN_SANDBOX_BEHAVIOR.md) | Which responses are *not* errors? |
-| 8 | [`COMMON_INTEGRATION_MISTAKES.md`](COMMON_INTEGRATION_MISTAKES.md) | What will I get wrong? |
-| 9 | [`IMPLEMENTATION_ESTIMATION_GUIDE.md`](IMPLEMENTATION_ESTIMATION_GUIDE.md) | How much work is this, and who does it? |
-| 10 | [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) | What is missing before real users? |
+| `/api/funnel/leads` | POST | none |
+| `/api/funnel/facial-analysis` | POST | none |
+| `/api/funnel/vitality-assessment` | POST | none |
+| `/api/funnel/booking` | POST | none |
+| `/api/v2/webhooks/payment` | POST | HMAC-SHA256 |
 
-## Reference
+Public HTTPS. No VPN, tunnel or IP allow-list required.
 
-| Document | Use it for |
+**Responsibility split.** Disglobal owns the user, the interface, the questionnaire
+and its scoring, and the payment. Vytalix owns persistence, payment verification,
+service activation and notifications.
+
+## Documentation
+
+| Document | Answers |
 |---|---|
-| [`QUICK_START.md`](QUICK_START.md) | Full field-by-field detail on the clinical endpoints |
-| [`PHASE_MATRIX.md`](PHASE_MATRIX.md) | Available now · planned · roadmap · out of scope |
+| [`PHASE1_SCOPE_AND_LIMITATIONS.md`](PHASE1_SCOPE_AND_LIMITATIONS.md) | What is in scope, what is not, and the open decisions |
+| [`FIRST_DAY_WITH_VYTALIX.md`](FIRST_DAY_WITH_VYTALIX.md) | How do I get something working today? |
+| [`FUNNEL_API_REFERENCE.md`](FUNNEL_API_REFERENCE.md) | Field-by-field detail with captured responses |
+| [`PAYMENT_AND_NOTIFICATION_FLOW.md`](PAYMENT_AND_NOTIFICATION_FLOW.md) | How payment and activation work |
 | [`FACIAL_ANALYSIS_STATUS.md`](FACIAL_ANALYSIS_STATUS.md) | Exact state of the facial component |
-| [`INTEGRATION_FAQ.md`](INTEGRATION_FAQ.md) | Specific questions during the build |
-| [`INTEGRATION_CHECKLIST.md`](INTEGRATION_CHECKLIST.md) | Shared verification list for both companies |
 | [`PARTNER_SECURITY_HANDOFF.md`](PARTNER_SECURITY_HANDOFF.md) | How credentials are delivered and rotated |
+| [`IMPLEMENTATION_ESTIMATION_GUIDE.md`](IMPLEMENTATION_ESTIMATION_GUIDE.md) | Which work belongs to whom, and what it depends on |
+| [`INTEGRATION_CHECKLIST.md`](INTEGRATION_CHECKLIST.md) | Shared verification list for both companies |
 
-## Machine-readable
+A second set of documents covering error-handling detail, the full call sequence and
+production readiness follows once the sandbox endpoint is confirmed reachable.
 
-| Path | What it is |
+## Machine-readable artefacts
+
+| Path | Contents |
 |---|---|
-| `openapi/vytalix-platform-v2.yaml` | API contract — import into your codegen or Postman |
+| `openapi/vytalix-platform-v2.yaml` | API contract for code generation or Postman import |
 | `postman/vytalix_postman_collection.json` | Runnable collection |
-| `examples/send-payment-webhook.sh` · `.js` | HMAC signing references — run before writing your own |
+| `examples/send-payment-webhook.sh` · `.js` | HMAC signing references |
 
-*`internal/` contains Vytalix operational runbooks and is not part of the partner
-deliverable.*
-
----
-
-## API classification
-
-| Class | Endpoints | Status |
-|---|---|---|
-| **Core** — the Phase 1 flow | `POST /api/funnel/leads` · `/facial-analysis` · `/vitality-assessment` · `/booking` · `POST /api/v2/webhooks/payment` | **Integrate these** |
-| **Support** — operational | `GET /liveness` · `/readiness` · `/openapi.yaml` | Health and contract |
-| **Future** — built, outside Phase 1 | `POST /api/v2/vitality/assess` · `GET /api/v2/vitality/{subjectRef}` · `POST /api/v2/preventive/score` · `GET /api/v2/referral/{subjectRef}` · `POST /api/v2/engagement/events` · `GET /api/v2/insights/cohort` | Available if scope expands. Vytalix **computes** the result rather than receiving it |
-| **Administrative** — internal only | `/admin/*` | Never exposed to partners |
-| **Experimental / not in scope** | `/api/v2/dental/*` · `/api/v2/catalog` · `/api/exchange-rate` | Commercial decision pending |
-
-Full breakdown, with MVP / Phase 1 / Phase 2 / Roadmap, in
-[`PHASE_MATRIX.md`](PHASE_MATRIX.md).
-
----
-
-## Authentication at a glance
-
-| Surface | Mechanism |
-|---|---|
-| The four funnel endpoints | **None today** — will change before production |
-| Payment webhook | HMAC-SHA256 over the canonical body |
-| Future (Group B) endpoints | `X-API-Key` header |
-
-Public HTTPS. **No VPN, no tunnel, no IP allow-list, no infrastructure change.**
-
----
+The OpenAPI file documents the full platform surface. Only the five endpoints
+listed above are in scope for this phase.
 
 ## Environments
 
@@ -94,12 +69,35 @@ Public HTTPS. **No VPN, no tunnel, no IP allow-list, no infrastructure change.**
 | Sandbox | `https://sandbox.api.vytalix.health` |
 | Production | Issued after sandbox sign-off |
 
-All sandbox data is **synthetic** and carries **no clinical meaning**. A digital
-assessment is not a medical diagnosis.
-
----
+Sandbox data is synthetic and carries no clinical meaning. A digital assessment is
+not a medical diagnosis; determining biological age requires in-person clinical
+evaluation.
 
 ## Support
 
-Send the **`X-Correlation-ID`** from the response headers plus the HTTP status —
-that locates your exact request. Never send credentials through a support channel.
+Include the `X-Correlation-ID` response header and the HTTP status in any support
+request. Credentials must never be sent through a support channel.
+
+---
+
+# Future platform roadmap
+
+The following are Vytalix platform capabilities **outside the Phase 1 contract**.
+They are listed for context only. None is available under this integration, and no
+delivery date is implied.
+
+| Capability | Current state |
+|---|---|
+| Production biometric facial recognition | Integration written; sandbox provider active |
+| Server-side scoring of the preventive questionnaire | Not available; Disglobal computes the score in Phase 1 |
+| Clinical engine exposed to partners | Endpoints exist for platform use; not part of this contract |
+| Automatic scheduling and calendar management | Not built |
+| Automatic assignment of physician or centre | Not built |
+| Commercial catalogue | Not part of this integration |
+| Production notification delivery | Pipeline runs; sandbox uses a logging provider |
+| Outbound callback to Disglobal after activation | Not built |
+| Rate limiting and quota enforcement | Recorded, not enforced |
+| Dental and other vertical modules | Outside this integration |
+
+Anything in this table that becomes commercially relevant is scoped as a separate
+phase with its own contract.

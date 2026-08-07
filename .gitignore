@@ -11,3 +11,4 @@ _agent/
 brain/
 artifacts/
 tmp/
+delivery/*.zip

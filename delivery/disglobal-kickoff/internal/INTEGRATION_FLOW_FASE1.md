@@ -48,7 +48,7 @@ contact detail — that is a hard boundary, not a convention.
 ### 2 — The user completes the assessment
 Your UI captures the eight measurements. Two of them (`digitalReflexes`,
 `staticBalance`) are three-dimension objects reduced to a product — see
-`API_QUICK_REFERENCE.md` before designing the form, because the expected order of
+`FUNNEL_API_REFERENCE.md` before designing the form, because the expected order of
 magnitude is not obvious.
 
 ### 3 — Vytalix processes

@@ -15,7 +15,7 @@ Five, and they are the Phase 1 flow: `POST /api/funnel/leads`,
 ### Then what are the `/api/v2` clinical endpoints for?
 Group B — a different integration model where **Vytalix computes** the clinical
 result from eight measurements rather than receiving one you computed. Operational
-and API-Key authenticated, but not part of the agreed flow. `PHASE_MATRIX.md` has
+and API-Key authenticated, but not part of the agreed flow. `PHASE1_SCOPE_AND_LIMITATIONS.md` has
 the breakdown.
 
 ### Why does the OpenAPI file show endpoints I am not supposed to use?

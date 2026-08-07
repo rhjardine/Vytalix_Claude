@@ -53,9 +53,10 @@ curl -s -X POST $VYX/api/funnel/facial-analysis \
   "meta": { "correlationId": "ea3497cf-…", "timestamp": "2026-08-06T13:57:33.703Z" } }
 ```
 
-> **Read `provider` before you display anything.** `"mock"` means the number is
-> derived from a hash of your image bytes, not from a face. It is correct plumbing
-> and meaningless data. See `FACIAL_ANALYSIS_STATUS.md`.
+> **Read `provider` before displaying any value.** `"mock"` indicates the sandbox
+> provider: the number is derived from the submitted image bytes, not from facial
+> analysis. The integration is correct; the value is not a finding. See
+> `FACIAL_ANALYSIS_STATUS.md`.
 
 **`422`** means the image is under 100 characters or over ~2 MB encoded.
 
@@ -172,9 +173,6 @@ Six checks. If all pass, your integration path is proven end to end.
 
 | Question | Document |
 |---|---|
-| What is this platform, exactly? | `DISGLOBAL_PHASE1_INTEGRATION_OVERVIEW.md` |
-| Full field-by-field detail | `API_QUICK_REFERENCE.md` |
-| Which responses are *not* errors? | `KNOWN_SANDBOX_BEHAVIOR.md` |
-| What will I get wrong? | `COMMON_INTEGRATION_MISTAKES.md` |
+| What is this platform, exactly? | `PHASE1_SCOPE_AND_LIMITATIONS.md` |
+| Full field-by-field detail | `FUNNEL_API_REFERENCE.md` |
 | How long will this take my team? | `IMPLEMENTATION_ESTIMATION_GUIDE.md` |
-| What is missing before production? | `PRODUCTION_READINESS.md` |

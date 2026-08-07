@@ -22,7 +22,7 @@ Ownership labels: **[D]** Disglobal · **[V]** Vytalix · **[B]** business decis
 | D7 | HMAC signing of the payment webhook | Canonical body; reference implementation shipped |
 | D8 | Retry policy on `500` and timeout | Guarantee provided; policy is yours |
 | D9 | `subjectRef` generation and mapping | Pseudonymous, stable per user |
-| D10 | Error handling for the documented codes | See `API_QUICK_REFERENCE.md` |
+| D10 | Error handling for the documented codes | See `FUNNEL_API_REFERENCE.md` |
 | D11 | Secret storage | Server-side only; never in a client bundle |
 
 **D3 is the largest and least obvious item.** If your estimate assumed Vytalix
