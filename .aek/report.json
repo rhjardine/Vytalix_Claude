@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-06-26T21:18:48.196Z",
+  "rules": [
+    {
+      "id": "RULE-DI-001",
+      "adr": "ADR-002",
+      "description": "External modules must use approved dental barrel exports instead of importing dental internals directly. The composition root (src/server.ts) may import dental HTTP routers directly."
+    },
+    {
+      "id": "RULE-DI-002",
+      "adr": "ADR-002",
+      "description": "Dental bounded context must not import core or longevity bounded contexts."
+    },
+    {
+      "id": "RULE-DI-003",
+      "adr": "ADR-002",
+      "description": "Core and longevity bounded contexts must not import dental internals."
+    }
+  ],
+  "findings": []
+}

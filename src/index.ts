@@ -17,20 +17,18 @@ import crypto from 'node:crypto'
 // ── Re-export all public types ────────────────────────────────────
 
 export type {
-  AssessBioAgeResponse,
-  ComputePreventiveScoreResponse,
-  EvaluateReferralResponse,
-  RecordEngagementResponse,
-  CohortInsightsResponse,
-  BiophysicsMeasurements,
-  DimensionalMeasurement,
   AgeStatus,
   ScoreTier,
   EngagementTier,
-  ReferralType,
   Urgency,
-  ProblemDetail,
 } from './shared/contracts-v1'
+
+// BiophysicsMeasurements and DimensionalMeasurement are defined in the
+// biophysics engine (their canonical source) — corrected re-export path.
+export type {
+  BiophysicsMeasurements,
+  DimensionalMeasurement,
+} from './longevity/biophysics-engine'
 
 // ── SDK-specific Spanish-first types (consumer-facing) ───────────
 
@@ -141,7 +139,9 @@ export class VytalixClient {
       edadCronologica: input.age,
       diferencial:     data.differentialAge,
       estado:          data.ageStatus,
-      interpretacion:  data.interpretation,
+      // El runtime no emite `interpretation` en Fase 1; se normaliza a '' para
+      // respetar el tipo declarado (string) en lugar de entregar undefined.
+      interpretacion:  data.interpretation ?? '',
       edadesParciales: {
         grasa:       data.partialAges.fatAge,
         imc:         data.partialAges.bmiAge,
@@ -154,9 +154,9 @@ export class VytalixClient {
       },
       derivacion: data.referralCTA?.eligible ? {
         elegible:  true,
-        titular:   data.referralCTA.payload?.headline ?? '',
-        urlCta:    data.referralCTA.payload?.ctaUrl   ?? '',
-        urgencia:  data.referralCTA.payload?.urgencyLabel ?? '',
+        titular:   data.referralCTA.ctaPayload?.headline ?? '',
+        urlCta:    data.referralCTA.ctaPayload?.ctaUrl   ?? '',
+        urgencia:  data.referralCTA.ctaPayload?.urgencyLabel ?? '',
       } : undefined,
       evaluadoEn: data.assessedAt,
     }
@@ -285,6 +285,16 @@ export class VytalixClient {
     return `DISG-${hash}`
   }
 
+  // Narrow an unknown JSON error body to the two fields this client reads.
+  // Local to this class — property checks only, no casts.
+  private errorFields(data: unknown): { detail?: string; type?: string } {
+    if (typeof data !== 'object' || data === null) return {}
+    return {
+      detail: 'detail' in data && typeof data.detail === 'string' ? data.detail : undefined,
+      type:   'type'   in data && typeof data.type   === 'string' ? data.type   : undefined,
+    }
+  }
+
   private async post(path: string, body: unknown, idempotencyKey?: string): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -303,8 +313,9 @@ export class VytalixClient {
 
     const data = await res.json()
     if (!res.ok) {
-      throw Object.assign(new Error(data.detail ?? `Vytalix API error ${res.status}`), {
-        status: res.status, code: data.type, body: data,
+      const { detail, type } = this.errorFields(data)
+      throw Object.assign(new Error(detail ?? `Vytalix API error ${res.status}`), {
+        status: res.status, code: type, body: data,
       })
     }
     return data
@@ -317,7 +328,10 @@ export class VytalixClient {
       signal:  AbortSignal.timeout(this.timeout),
     })
     const data = await res.json()
-    if (!res.ok) throw Object.assign(new Error(data.detail ?? `Vytalix API error ${res.status}`), { status: res.status })
+    if (!res.ok) {
+      const { detail } = this.errorFields(data)
+      throw Object.assign(new Error(detail ?? `Vytalix API error ${res.status}`), { status: res.status })
+    }
     return data
   }
 }

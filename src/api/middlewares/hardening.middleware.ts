@@ -23,6 +23,20 @@ const RATE_LIMITS: Record<string, { windowMs: number; max: number }> = {
   ENTERPRISE:   { windowMs: 60_000, max: 99999 },
 }
 
+// In-process fallback counter — used ONLY when Redis is unavailable so the rate
+// limit degrades (per instance, best-effort) instead of switching off entirely.
+// No new dependency; entries are pruned on access to keep the map bounded.
+const localWindows = new Map<string, { count: number; expiresAt: number }>()
+
+function bumpLocalWindow(key: string, windowMs: number): number {
+  const now = Date.now()
+  for (const [k, v] of localWindows) if (v.expiresAt <= now) localWindows.delete(k)
+  const entry = localWindows.get(key)
+  if (entry && entry.expiresAt > now) { entry.count += 1; return entry.count }
+  localWindows.set(key, { count: 1, expiresAt: now + windowMs })
+  return 1
+}
+
 /**
  * Sliding window rate limiter based on API key tier.
  * Falls back to STANDARD limits for unauthenticated requests.
@@ -62,8 +76,22 @@ export function rateLimiter() {
         return
       }
     } catch (_) {
-      // Redis unavailable — fail open (log, continue)
-      logger.warn({ keyId }, 'Rate limiter Redis error — failing open')
+      // Redis unavailable — degrade to the in-process counter rather than
+      // disabling the limit. Protection stays on (per instance); the API keeps
+      // serving traffic within the tier limit.
+      const current = bumpLocalWindow(windowKey, limitConf.windowMs)
+      logger.warn({ keyId, current }, 'Rate limiter Redis error — degraded to in-process counter')
+      if (current > limitConf.max) {
+        res.setHeader('Retry-After', Math.ceil(limitConf.windowMs / 1000))
+        res.status(429).json({
+          type:   'https://api.vytalix.health/errors/429',
+          title:  'Too Many Requests',
+          status: 429,
+          detail: `Rate limit exceeded for tier ${tier}. Limit: ${limitConf.max} req/min.`,
+          correlationId: req.correlationId,
+        })
+        return
+      }
     }
 
     next()

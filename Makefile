@@ -2,7 +2,7 @@
 # Vytalix Platform — Makefile
 # =============================================================================
 
-.PHONY: setup dev demo check reset stop logs test typecheck lint build
+.PHONY: setup dev demo check reset stop logs test typecheck lint build ci ci-full aek
 
 # ── Setup (first run) ─────────────────────────────────────────────
 setup:
@@ -112,4 +112,30 @@ rc-validate:
 	@$(MAKE) lint        && echo "  ✅ Lint"      || echo "  ❌ Lint FAILED"
 	@$(MAKE) test        && echo "  ✅ Tests"     || echo "  ❌ Tests FAILED"
 	@$(MAKE) check       && echo "  ✅ Health"    || echo "  ❌ Health FAILED"
+	@echo "Done."
+
+# ── AEK architecture gate ─────────────────────────────────────────
+aek:
+	npm run aek:check
+
+# ── CI blocking gates (mirrors .github/workflows/ci.yml blocking stages) ──
+# Single entrypoint for the merge-blocking quality gates. Reuses existing
+# package.json scripts; introduces no new behavior. See:
+#   docs/governance/QUALITY_GATES.md
+ci:
+	@echo "🔒 Running blocking quality gates (sandbox + prisma validate + AEK)..."
+	npm run ci
+
+# ── CI full (includes advisory stages — needs Postgres + Redis for tests) ──
+# Advisory stages may fail on pre-existing issues documented in
+# docs/SPRINT_E1_REPORT.md; they do not block locally.
+ci-full:
+	@echo "🧪 Full local validation (advisory stages may fail — see SPRINT_E1_REPORT.md)..."
+	@$(MAKE) typecheck && echo "  ✅ TypeCheck" || echo "  ⚠️  TypeCheck (advisory)"
+	@npm run api:build && echo "  ✅ Build"     || echo "  ⚠️  Build (advisory)"
+	@npm run sandbox:test && echo "  ✅ Sandbox" || echo "  ❌ Sandbox FAILED (blocking)"
+	@npm run test && echo "  ✅ Tests"          || echo "  ⚠️  Tests (advisory — needs DB/Redis)"
+	@npx prisma validate && echo "  ✅ Prisma"  || echo "  ❌ Prisma FAILED (blocking)"
+	@npm run aek:check && echo "  ✅ AEK"        || echo "  ❌ AEK FAILED (blocking)"
+	@npm run lint && echo "  ✅ Lint"           || echo "  ⚠️  Lint (advisory — no config)"
 	@echo "Done."

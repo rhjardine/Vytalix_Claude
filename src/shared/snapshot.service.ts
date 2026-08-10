@@ -29,7 +29,7 @@ export class SnapshotService {
     // Fetch most recent value for each tracked LOINC code
     const latestByLoinc = await this.fetchLatestByLoinc(tenantId, patientId, db)
 
-    const patient = await db.$tx(tx =>
+    const patient = await db.$tx(tc =>
       tc.queryOne('SELECT "dateOfBirth" FROM patients WHERE id=$1::uuid', [patientId])
     )
 
@@ -52,7 +52,7 @@ export class SnapshotService {
     }
 
     // Upsert with version increment (optimistic locking)
-    const result = await db.$tx(async (tx) => {
+    const result = await db.$tx(async (tc) => {
       const existing = await tc.queryOne('SELECT "snapshotVersion" FROM patient_health_snapshots WHERE "patientId"=$1::uuid', [patientId])
 
       const currentVersion = existing?.snapshotVersion ?? 0

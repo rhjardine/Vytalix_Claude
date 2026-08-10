@@ -80,7 +80,7 @@ export class PlatformPipelineOrchestrator {
     // Evaluate referral triggers
     try {
       const cvRisk = await withTenant(tenantId, tc =>
-        tc.queryOne(
+        tc.queryOne<{ riskCategory: string }>(
           `SELECT "riskCategory" FROM risk_scores
            WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
            ORDER BY "computedAt" DESC LIMIT 1`,
@@ -89,7 +89,7 @@ export class PlatformPipelineOrchestrator {
       )
 
       const engagementTier = await withTenant(tenantId, tc =>
-        tc.queryOne(
+        tc.queryOne<{ tier: string }>(
           `SELECT tier FROM engagement_scores
            WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid`,
           [tenantId, patientId]
@@ -114,7 +114,7 @@ export class PlatformPipelineOrchestrator {
     tenantId: string,
     patientId: string,
     correlationId: string,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<void> {
     const start = Date.now()
     try {
@@ -163,13 +163,13 @@ export class PlatformPipelineOrchestrator {
     tenantId: string,
     patientId: string,
     correlationId: string,
-    log: ReturnType<typeof logger.child>
+    log: ReturnType<typeof logger.child<never>>
   ): Promise<void> {
     const start = Date.now()
     try {
       const [bioAge, riskScore] = await Promise.all([
         withTenant(tenantId, tc =>
-          tc.queryOne(
+          tc.queryOne<{ differentialAge: number }>(
             `SELECT "differentialAge"::float FROM biological_age_assessments
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
              ORDER BY "assessedAt" DESC LIMIT 1`,
@@ -177,7 +177,7 @@ export class PlatformPipelineOrchestrator {
           )
         ),
         withTenant(tenantId, tc =>
-          tc.queryOne(
+          tc.queryOne<{ riskCategory: string }>(
             `SELECT "riskCategory" FROM risk_scores
              WHERE "tenantId"=$1::uuid AND "patientId"=$2::uuid
              ORDER BY "computedAt" DESC LIMIT 1`,
@@ -280,7 +280,7 @@ async function deliverReferralWebhook(payload: {
 }): Promise<void> {
   // Load tenant webhook config
   const config = await withTenant(payload.tenantId, tc =>
-    tc.queryOne(
+    tc.queryOne<{ webhookUrl: string; webhookSecret: string }>(
       `SELECT "webhookUrl", "webhookSecret"
        FROM tenants WHERE id=$1::uuid AND "webhookUrl" IS NOT NULL`,
       [payload.tenantId]

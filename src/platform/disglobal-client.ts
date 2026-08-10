@@ -267,6 +267,13 @@ export class DisgglobalVytalixClient {
     return 'PRONTO'
   }
 
+  // Narrow an unknown JSON error body to the `detail` field this client reads.
+  // Local to this class — property check only, no casts.
+  private errorDetail(data: unknown): string | undefined {
+    if (typeof data !== 'object' || data === null) return undefined
+    return 'detail' in data && typeof data.detail === 'string' ? data.detail : undefined
+  }
+
   private async post(path: string, body: unknown, idempotencyKey?: string, correlationId?: string): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type':    'application/json',
@@ -284,7 +291,7 @@ export class DisgglobalVytalixClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
-      throw Object.assign(new Error(err.detail ?? `Vytalix API error ${res.status}`), { status: res.status, body: err })
+      throw Object.assign(new Error(this.errorDetail(err) ?? `Vytalix API error ${res.status}`), { status: res.status, body: err })
     }
 
     return res.json()
@@ -300,7 +307,7 @@ export class DisgglobalVytalixClient {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw Object.assign(new Error(err.detail ?? `Vytalix API error ${res.status}`), { status: res.status })
+      throw Object.assign(new Error(this.errorDetail(err) ?? `Vytalix API error ${res.status}`), { status: res.status })
     }
     return res.json()
   }

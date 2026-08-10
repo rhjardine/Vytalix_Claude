@@ -1,0 +1,85 @@
+openapi: 3.1.0
+info:
+  title: Vytalix Insurtech API
+  version: 1.0.0
+  description: >
+    API Surface for Disglobal integration with Vytalix clinical orchestration layer.
+
+servers:
+  - url: https://api.vytalix.io/v1
+
+paths:
+
+  /assessments:
+    post:
+      summary: Create assessment session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, channel]
+              properties:
+                userId:
+                  type: string
+                channel:
+                  type: string
+                consentAccepted:
+                  type: boolean
+      responses:
+        "200":
+          description: Assessment created
+
+  /assessments/{id}/scan:
+    post:
+      summary: Facial scan evaluation
+      parameters:
+        - name: id
+          in: path
+          required: true
+      responses:
+        "200":
+          description: Scan completed
+
+  /assessments/{id}/questionnaire:
+    post:
+      summary: Questionnaire evaluation
+      responses:
+        "200":
+          description: Questionnaire processed
+
+  /assessments/{id}/evaluate:
+    post:
+      summary: Generate clinical recommendation (non-diagnostic)
+      responses:
+        "200":
+          description: Recommendation generated
+
+  /appointments:
+    post:
+      summary: Create medical appointment
+      responses:
+        "200":
+          description: Appointment reserved
+
+  /payments/intent:
+    post:
+      summary: Create payment intent with split rules
+      responses:
+        "200":
+          description: Payment intent created
+
+  /webhooks/disglobal/payment-confirmed:
+    post:
+      summary: Payment confirmation webhook
+      responses:
+        "200":
+          description: Webhook processed
+
+  /services/activate:
+    post:
+      summary: Activate service after payment
+      responses:
+        "200":
+          description: Service activated

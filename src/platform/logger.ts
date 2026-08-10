@@ -51,6 +51,12 @@ export const clinicalLog = {
   accessDenied(ctx: { correlationId: string; userId: string; role: string; path: string; method: string }) {
     logger.warn({ ...ctx, event: 'rbac.denied' }, `Access denied: ${ctx.role} → ${ctx.method} ${ctx.path}`)
   },
+  assessmentCompleted(ctx: { correlationId: string; tenantId: string; patientId: string; biologicalAge: number; differentialAge: number }) {
+    logger.info({ ...ctx, event: 'assessment.completed' }, `Assessment completed: biological age ${ctx.biologicalAge} (${ctx.differentialAge >= 0 ? '+' : ''}${ctx.differentialAge})`)
+  },
+  funnelLead(ctx: { correlationId: string; email: string; source: string; step: string }) {
+    logger.info({ ...ctx, event: 'funnel.lead' }, `Funnel lead: ${ctx.step} from ${ctx.source}`)
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────

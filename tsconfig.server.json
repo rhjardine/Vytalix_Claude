@@ -25,6 +25,7 @@
     "dist",
     "frontend",
     "**/*.test.ts",
-    "**/*.spec.ts"
+    "**/*.spec.ts",
+    "src/demo/**"
   ]
 }

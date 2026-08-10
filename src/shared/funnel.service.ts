@@ -12,6 +12,7 @@
 
 import { z } from 'zod'
 import { BiophysicsEngine } from '../longevity/biophysics-engine'
+import type { DimensionalMeasurement } from '../longevity/biophysics-engine'
 import { getDb, withTenant } from '../platform/db'
 import { logger, clinicalLog } from '../platform/logger'
 import { eventBus } from '../platform/event-bus'
@@ -56,6 +57,22 @@ export const CreateBookingSchema = z.object({
 export type CreateLeadInput        = z.infer<typeof CreateLeadSchema>
 export type VitalityAssessmentInput = z.infer<typeof VitalityAssessmentSchema>
 export type CreateBookingInput     = z.infer<typeof CreateBookingSchema>
+
+// The schemas above mark high/long/width as required positive numbers, but the
+// inferred type widens them to optional. The biophysics engine multiplies the
+// three dimensions, so defaulting a missing one to 0 would silently zero out a
+// clinical volume. Build the domain value explicitly instead and fail loudly if
+// a dimension is ever absent (unreachable while zod validates the payload).
+function toDimensional(
+  label: string,
+  m: { high?: number; long?: number; width?: number },
+): DimensionalMeasurement {
+  const { high, long, width } = m
+  if (high === undefined || long === undefined || width === undefined) {
+    throw Object.assign(new Error(`${label} requires high, long and width`), { statusCode: 422 })
+  }
+  return { high, long, width }
+}
 
 // ── Result types ──────────────────────────────────────────────────
 
@@ -161,9 +178,9 @@ export class FunnelService {
       {
         fatPercentage:       input.fatPercentage,
         bmi:                 input.bmi,
-        digitalReflexes:     input.digitalReflexes,
+        digitalReflexes:     toDimensional('digitalReflexes', input.digitalReflexes),
         visualAccommodation: input.visualAccommodation,
-        staticBalance:       input.staticBalance,
+        staticBalance:       toDimensional('staticBalance', input.staticBalance),
         skinHydration:       input.skinHydration,
         systolicPressure:    input.systolicPressure,
         diastolicPressure:   input.diastolicPressure,
