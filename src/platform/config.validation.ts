@@ -19,6 +19,7 @@ const PUBLISHED_DEFAULTS: Record<string, string[]> = {
   WEBHOOK_SECRET:           ['demo_webhook_secret'],
   JWT_SECRET:               ['change-me-in-production'],
   DEFAULT_FUNNEL_TENANT_ID: ['a1b2c3d4-0000-4000-8000-000000000001'],
+  WHATSAPP_NUMBER:          ['58412XXXXXXX'],
 }
 
 /** Required once the deployment is not local. Each entry explains *why*, so a
@@ -29,7 +30,14 @@ const REQUIRED_OUTSIDE_DEV: Array<{ name: string; why: string }> = [
   { name: 'JWT_SECRET',               why: 'signs physician/admin sessions' },
   { name: 'DISGLOBAL_WEBHOOK_SECRET', why: 'HMAC secret that authenticates Disglobal payment webhooks' },
   { name: 'DEFAULT_FUNNEL_TENANT_ID', why: 'tenant attributed to public funnel traffic and webhook payments' },
+  { name: 'WHATSAPP_NUMBER',          why: 'booking hand-off number; an unusable value renders a dead wa.me link' },
 ]
+
+/** A booking response is only actionable if the wa.me link is dialable: digits
+ *  only, 10–15 of them (E.164 without the leading +), and a country code that
+ *  cannot start with 0 or 1. This rejects the published placeholder shape
+ *  (58412XXXXXXX) rather than only its exact literal. */
+const DIALABLE_MSISDN = /^[2-9][0-9]{9,14}$/
 
 export interface ConfigValidationResult {
   environment: string
@@ -67,6 +75,17 @@ export function inspectConfig(env: NodeJS.ProcessEnv = process.env): ConfigValid
   const jwt = env.JWT_SECRET
   if (jwt && jwt.length < 32) {
     const message = 'JWT_SECRET must be at least 32 characters'
+    isLocal ? warnings.push(message) : errors.push(message)
+  }
+
+  // WHATSAPP_NUMBER shape is only observable once a patient taps the link, so
+  // surface it at boot instead of shipping a booking response whose wa.me URL
+  // cannot be dialled.
+  const whatsapp = env.WHATSAPP_NUMBER
+  if (whatsapp && whatsapp.trim() !== '' && !DIALABLE_MSISDN.test(whatsapp.trim())) {
+    const message =
+      'WHATSAPP_NUMBER is not a dialable number — expected 10 to 15 digits, ' +
+      'no "+", spaces, separators or placeholder characters'
     isLocal ? warnings.push(message) : errors.push(message)
   }
 
